@@ -1,6 +1,6 @@
 mod frame;
-mod tracing_processor;
 pub mod registrar;
+mod tracing_processor;
 pub mod update;
 pub mod zone;
 
@@ -627,9 +627,6 @@ mod tests {
     use approx::assert_relative_eq;
     use claim::assert_some;
     use pretty_assertions::assert_eq;
-    use proptest::collection::vec;
-    use proptest::prelude::*;
-
     // - property test for sane averages
     // proptest! {
     //     #[test]

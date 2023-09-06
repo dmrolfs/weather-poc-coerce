@@ -25,6 +25,7 @@ extern crate coerce_macros;
 #[macro_use]
 extern crate utoipa;
 
+mod connect;
 mod errors;
 mod model;
 mod server;

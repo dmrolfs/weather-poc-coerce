@@ -1,8 +1,8 @@
+use crate::model::zone::LocationZoneEvent;
+use crate::model::{ForecastDetail, WeatherAlert, WeatherFrame};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::ProjectionError;
 use iso8601_timestamp::Timestamp;
-use crate::model::{ForecastDetail, WeatherAlert, WeatherFrame};
-use crate::model::zone::LocationZoneEvent;
 
 pub const WEATHER_QUERY_VIEW: &str = "weather_query";
 
@@ -37,13 +37,12 @@ impl Default for WeatherView {
 
 impl WeatherView {
     pub fn new(zone_code: impl Into<String>) -> Self {
-        Self {
-            zone_code: zone_code.into(),
-            ..Default::default()
-        }
+        Self { zone_code: zone_code.into(), ..Default::default() }
     }
 
-    pub fn apply_event(view: &WeatherView, event: &LocationZoneEvent) -> Result<ProcessResult<Self>, ProjectionError> {
+    pub fn apply_event(
+        view: &WeatherView, event: &LocationZoneEvent,
+    ) -> Result<ProcessResult<Self>, ProjectionError> {
         let mut result = view.clone();
 
         match event {

@@ -1,16 +1,17 @@
+mod actor;
 mod queries;
-mod location;
+mod state;
 
+pub use actor::{LocationZone, LocationZoneAggregate};
 pub use errors::LocationZoneError;
-pub use location::{LocationZone, LocationZoneAggregate};
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
 pub use queries::WeatherView;
 pub use services::{LocationServices, LocationServicesRef};
 
 mod protocol {
-    use strum_macros::Display;
     use crate::model::{LocationZoneCode, WeatherAlert, WeatherFrame, ZoneForecast};
     use coerce_cqrs::CommandResult;
+    use strum_macros::Display;
 
     #[derive(Debug, Clone, PartialEq, JsonMessage, Serialize, Deserialize)]
     #[result("CommandResult<()>")]
@@ -36,9 +37,9 @@ mod protocol {
 }
 
 mod services {
-    use std::sync::Arc;
     use crate::model::{LocationZoneCode, LocationZoneType, WeatherFrame, ZoneForecast};
     use crate::services::noaa::{NoaaWeatherError, NoaaWeatherServices, ZoneWeatherApi};
+    use std::sync::Arc;
 
     pub type LocationServicesRef = Arc<LocationServices>;
 
@@ -53,11 +54,15 @@ mod services {
 
     #[async_trait]
     impl ZoneWeatherApi for LocationServices {
-        async fn zone_observation(&self, zone: &LocationZoneCode) -> Result<WeatherFrame, NoaaWeatherError> {
+        async fn zone_observation(
+            &self, zone: &LocationZoneCode,
+        ) -> Result<WeatherFrame, NoaaWeatherError> {
             self.0.zone_observation(zone).await
         }
 
-        async fn zone_forecast(&self, zone_type: LocationZoneType, zone: &LocationZoneCode) -> Result<ZoneForecast, NoaaWeatherError> {
+        async fn zone_forecast(
+            &self, zone_type: LocationZoneType, zone: &LocationZoneCode,
+        ) -> Result<ZoneForecast, NoaaWeatherError> {
             self.0.zone_forecast(zone_type, zone).await
         }
     }

@@ -16,50 +16,52 @@ coerce = { version = "0.8.10", features = ["full",] }
 coerce-macros = "0.2.0"
 coerce-cqrs = { git = "https://github.com/dmrolfs/coerce-cqrs-rs" }
 
-anyhow = "1.0.74"
+anyhow = "1.0.75"
 approx = "0.5.1"
 async-trait = "0.1.73"
 axum = { version = "0.6.20", default-features = true, features = ["macros", ] }
-chrono = "0.4.26"
-clap = { version = "4.3.21", default-features = true, features = ["derive",] }
+chrono = "0.4.29"
+clap = { version = "4.4.2", default-features = true, features = ["derive",] }
 config = "0.13.3"
 cuid2 = "0.1.2"
 either = "1.9.0"
+enumflags2 = { version = "0.7.7", features = ["serde"] }
 geojson = "0.24.1"
 governor = "0.6.0"
 hyper = "0.14.27"
 tower_governor = "0.1.0"
 iso8601-timestamp = "0.2.11"
 maplit = "1.0.2"
+multi_index_map = "0.8.1"
 num_cpus = "1.16.0"
 once_cell = "1.18.0"
-reqwest = { version = "0.11.18", features = ["json", "rustls-tls", ] }
+reqwest = { version = "0.11.20", features = ["json", "rustls-tls", ] }
 reqwest-middleware = "0.2.3"
-reqwest-retry = "0.2.2"
+reqwest-retry = "0.2.3"
 secrecy = "0.8.0"
-serde = { version = "1.0.183", features = ["derive", "rc",] }
+serde = { version = "1.0.188", features = ["derive", "rc",] }
 serde_json = "1.0.105"
 serde_yaml = "0.9.25"
-serde_with = { version = "3.2.0", features = ["chrono", "json", "macros", ] }
+serde_with = { version = "3.3.0", features = ["chrono", "json", "macros", ] }
 smol_str = "0.2.0"
 strum = "0.25.0"
 strum_macros = "0.25.2"
 settings_loader = { git = "https://github.com/dmrolfs/settings-loader-rs", features = ["database", "http", ] }
 tagid = { git = "https://github.com/dmrolfs/tagid-rs", features = ["envelope",] }
-thiserror = "1.0.46"
-tokio = { version = "1.31.0", features = ["full"] }
+thiserror = "1.0.48"
+tokio = { version = "1.32.0", features = ["full"] }
 tokio-stream = "0.1.14"
 tokio-util = { version = "0.7.8", features = ["full",] }
 tower = { version = "0.4.13", features = ["timeout", "limit", ] }
-tower-http = { version = "0.4.3", features = ["add-extension", "trace", "timeout", "compression-full", "decompression-full", "request-id", "util",] }
+tower-http = { version = "0.4.4", features = ["add-extension", "trace", "timeout", "compression-full", "decompression-full", "request-id", "util",] }
 tracing = { version = "0.1.37", default-features = true, features = ["valuable", ] }
 tracing-bunyan-formatter = "0.3.9"
 tracing-futures = "0.2.5"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "json", ] }
 trim-margin = "0.1.0"
-url = { version = "2.4.0", features = ["serde"] }
-utoipa = { version = "3.4.4", features = ["axum_extras", "chrono", "decimal", "debug"] }
+url = { version = "2.4.1", features = ["serde"] }
+utoipa = { version = "3.5.0", features = ["axum_extras", "chrono", "decimal", "debug"] }
 utoipa-swagger-ui = { version = "3.1.5", features = ["axum"] }
 validator = { version = "0.16.1", features = ["derive"] }
 valuable = { version = "0.1.0", features = ["derive"] }
@@ -80,12 +82,12 @@ features = [
 
 [dev-dependencies]
 claim = { git = "https://github.com/dmrolfs/rust-claim", branch = "bump-autocfg-version" }
-fake = { version = "2.6.1", features = ["chrono"] }
+fake = { version = "2.8.0", features = ["chrono"] }
 pretty_assertions = "1.4.0"
 proptest = "1.2.0"
 serde_test = "1.0.176"
-temp-env = "0.3.4"
-tokio-test = "0.4.2"
+temp-env = "0.3.5"
+tokio-test = "0.4.3"
 wiremock = "0.5.19"
 
 
