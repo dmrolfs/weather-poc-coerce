@@ -10,6 +10,7 @@ use coerce_cqrs::projection::processor::{ProcessEntry, ProcessResult, ProcessorC
 use coerce_cqrs::projection::{PersistenceId, ProjectionError};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use tracing::Instrument;
 
 #[derive(Clone)]
 pub struct UpdateLocationsController {
@@ -35,26 +36,26 @@ impl fmt::Debug for UpdateLocationsController {
 impl ProcessEntry for UpdateLocationsController {
     type Projection = ();
 
-    #[instrument(level = "debug", skip(self, _projection, entry, ctx))]
+    #[instrument(level = "debug", skip(self, _projection, entry, _ctx))]
     fn apply_entry_to_projection(
         &self, persistence_id: &PersistenceId, _projection: &Self::Projection, entry: JournalEntry,
-        ctx: &ProcessorContext,
+        _ctx: &ProcessorContext,
     ) -> ProcessResult<Self::Projection, ProjectionError> {
         let payload_type = entry.payload_type.clone();
 
         let event = match Self::from_bytes::<UpdateLocationsEvent>(entry) {
             Ok(evt) => evt,
             Err(error) => {
-                info!("{payload_type} is not an UpdateLocationsEvent -- skipping");
+                info!(?error, "{payload_type} is not an UpdateLocationsEvent -- skipping");
                 return ProcessResult::Unchanged;
             },
         };
 
         if let UpdateLocationsEvent::Started(zones) = event {
             let saga_id = persistence_id.into_actor_id();
-            self.do_spawn_update_observations(&saga_id, &zones);
-            self.do_spawn_update_forecasts(&saga_id, &zones);
-            self.do_update_zone_alerts(&saga_id, &zones);
+            self.do_spawn_update_observations(&zones);
+            self.do_spawn_update_forecasts(&zones);
+            self.do_spawn_update_zone_alerts(&saga_id, &zones);
         }
 
         ProcessResult::Unchanged
@@ -64,21 +65,37 @@ impl ProcessEntry for UpdateLocationsController {
 type ZoneUpdateFailures = HashMap<LocationZoneCode, LocationZoneError>;
 
 impl UpdateLocationsController {
-    #[instrument(level = "debug", skip(self))]
-    fn do_spawn_update_observations(&self, saga_id: &ActorId, zones: &[LocationZoneCode]) {
+    fn do_spawn_update_observations(&self, zones: &[LocationZoneCode]) {
         for z in zones {
-            tokio::spawn(async { zone::notify_observe(z, &self.system).await });
+            tokio::spawn(
+                async {
+                    zone::notify_observe(z, &self.system).await
+                }
+                    .instrument(debug_span!("observe location zone", zone=%z))
+            );
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
-    fn do_spawn_update_forecasts(&self, saga_id: &ActorId, zones: &[LocationZoneCode]) {
+    fn do_spawn_update_forecasts(&self, zones: &[LocationZoneCode]) {
         for z in zones {
-            tokio::spawn(async { zone::notify_forecast(z, &self.system).await });
+            tokio::spawn(
+                async {
+                    zone::notify_forecast(z, &self.system).await
+                }
+                    .instrument(debug_span!("forecast location zone", zone=%z))
+            );
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    fn do_spawn_update_zone_alerts(&self, saga_id: &ActorId, zones: &[LocationZoneCode]) {
+        tokio::spawn(
+            async {
+                self.do_update_zone_alerts(saga_id, zones)
+            }
+                .instrument(debug_span!("update location weather alerts", %saga_id, ?zones))
+        );
+    }
+
     async fn do_update_zone_alerts(&self, saga_id: &ActorId, zones: &[LocationZoneCode]) {
         let update_zones: HashSet<_> = zones.iter().cloned().collect();
         let mut alerted_zones = HashSet::with_capacity(update_zones.len());
@@ -95,13 +112,6 @@ impl UpdateLocationsController {
                 .filter(|z| update_zones.contains(z))
                 .collect();
 
-            // for affected in updates_affected {
-            //     alerted_zones.insert(affected.clone());
-            //     let alert = alert.clone();
-            //     if let Err(error) = zone::notify_update_alert(&affected, Some(alert), &self.system).await {
-            //         zone_update_failures.insert(affected, error);
-            //     }
-            // }
             let (affected_zones, failures) =
                 self.do_alert_affected_zones(alert, saga_affected_zones).await;
             alerted_zones.extend(affected_zones);
@@ -109,18 +119,12 @@ impl UpdateLocationsController {
         }
 
         // -- unaffected zones
-        // let unaffected_zones: Vec<_> = update_zones.difference(&alerted_zones).cloned().collect();
-        // info!(?alerted_zones, ?unaffected_zones, %nr_alerts, "DMR: finishing alerting with unaffected notes...");
-        // for unaffected in unaffected_zones {
-        //     if let Err(error) = zone::notify_update_alert(&unaffected, None, &self.system).await {
-        //         zone_update_failures.insert(unaffected, error);
-        //     }
-        // }
         let unaffected_zones: Vec<_> = update_zones.difference(&alerted_zones).cloned().collect();
         info!(?alerted_zones, ?unaffected_zones, %nr_alerts, "DMR: finishing alerting with unaffected notes...");
         let unaffected_failures = self.do_update_unaffected_zones(unaffected_zones).await;
         zone_update_failures.extend(unaffected_failures);
 
+        // -- note update failures
         self.do_note_alert_update_failures(saga_id.clone(), zone_update_failures)
             .await;
     }
