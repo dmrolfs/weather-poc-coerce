@@ -1,8 +1,11 @@
 mod location_status;
 mod saga;
+mod controller;
 mod services;
 mod state;
 
+use coerce::actor::system::ActorSystem;
+use coerce::actor::ActorId;
 pub use errors::UpdateLocationsError;
 pub use protocol::{UpdateLocationsCommand, UpdateLocationsEvent};
 pub use saga::{UpdateLocations, UpdateLocationsId, UpdateLocationsSaga};
@@ -10,13 +13,33 @@ pub use services::{UpdateLocationServices, UpdateLocationServicesRef};
 
 use crate::connect::event_broadcast::EventBroadcastTopic;
 use crate::connect::EventEnvelope;
-use crate::model::zone::LocationZoneEvent;
+use crate::model::zone::{LocationZoneError, LocationZoneEvent};
 use crate::model::LocationZoneCode;
 use tagid::Entity;
 
 #[inline]
 pub fn generate_id() -> UpdateLocationsId {
     UpdateLocations::next_id()
+}
+
+#[instrument(level = "trace", skip(system))]
+async fn note_zone_alert_status_updated(
+    saga_id: ActorId, zone: LocationZoneCode, system: &ActorSystem,
+) -> Result<(), UpdateLocationsError> {
+    if let Some(saga_ref) = system.get_tracked_actor::<UpdateLocations>(saga_id).await {
+        saga_ref.notify(UpdateLocationsCommand::NoteLocationAlertStatusUpdate(zone))?;
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", skip(system))]
+async fn note_zone_update_failure(
+    saga_id: ActorId, zone: LocationZoneCode, error: LocationZoneError, system: &ActorSystem,
+) -> Result<(), UpdateLocationsError> {
+    if let Some(saga_ref) = system.get_tracked_actor::<UpdateLocations>(saga_id).await {
+        saga_ref.notify(UpdateLocationsCommand::NoteLocationsUpdateFailure(zone))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,5 +123,8 @@ mod errors {
 
         #[error("{0}")]
         Weather(#[from] crate::errors::WeatherError),
+
+        #[error("failed to notify actor: {0}")]
+        ActorRef(#[from] coerce::actor::ActorRefErr),
     }
 }

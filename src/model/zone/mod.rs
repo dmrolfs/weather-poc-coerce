@@ -2,11 +2,44 @@ mod actor;
 mod queries;
 mod state;
 
+use crate::model::{LocationZoneCode, WeatherAlert};
 pub use actor::{LocationZone, LocationZoneAggregate};
+use coerce::actor::system::ActorSystem;
+use coerce::actor::IntoActorId;
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
 pub use queries::WeatherView;
 pub use services::{LocationServices, LocationServicesRef};
+
+#[instrument(level = "trace", skip(system))]
+pub async fn notify_observe(
+    zone: &LocationZoneCode, system: &ActorSystem,
+) -> Result<(), LocationZoneError> {
+    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
+        zone_ref.notify(LocationZoneCommand::Observe)?;
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", skip(system))]
+pub async fn notify_forecast(
+    zone: &LocationZoneCode, system: &ActorSystem,
+) -> Result<(), LocationZoneError> {
+    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
+        zone_ref.notify(LocationZoneCommand::Forecast)?;
+    }
+    Ok(())
+}
+
+#[instrument(level = "trace", skip(system))]
+pub async fn notify_update_alert(
+    zone: &LocationZoneCode, alert: Option<WeatherAlert>, system: &ActorSystem,
+) -> Result<(), LocationZoneError> {
+    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
+        zone_ref.notify(LocationZoneCommand::NoteAlert(alert))?;
+    }
+    Ok(())
+}
 
 mod protocol {
     use crate::model::{LocationZoneCode, WeatherAlert, WeatherFrame, ZoneForecast};
@@ -78,5 +111,8 @@ mod errors {
 
         #[error("{0}")]
         Noaa(#[from] crate::services::noaa::NoaaWeatherError),
+
+        #[error("failed to notify actor: {0}")]
+        ActorRef(#[from] coerce::actor::ActorRefErr),
     }
 }
