@@ -244,7 +244,6 @@ where
     C: Message,
 {
     inner: Arc<inner::CommandEnvelopeRef<C>>,
-    // _marker: PhantomData<(A, C)>,
 }
 
 impl<C> fmt::Debug for CommandEnvelope<C>

@@ -5,7 +5,7 @@ use coerce_cqrs::projection::processor::{
     ProcessEntry, ProcessResult, Processor, ProcessorContext, ProcessorEngine, ProcessorError,
     ProcessorSourceRef, Ready, RegularInterval,
 };
-use coerce_cqrs::projection::{ProjectionError, ProjectionStorage};
+use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorage};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -27,26 +27,26 @@ impl<E: Message + Debug> ProcessEntry for TracingApplicator<E> {
     type Projection = ();
 
     fn apply_entry_to_projection(
-        &self, projection: &Self::Projection, entry: JournalEntry, ctx: &ProcessorContext,
-    ) -> Result<ProcessResult<Self::Projection>, ProjectionError> {
-        match E::from_bytes(entry.bytes.to_vec()) {
+        &self, persistence_id: &PersistenceId, projection: &Self::Projection, entry: JournalEntry,
+        ctx: &ProcessorContext,
+    ) -> ProcessResult<Self::Projection, ProjectionError> {
+        match Self::from_bytes::<E>(entry) {
             Ok(event) => info!(
-                "EVENT_TRACE: {projection}-{payload_type}#{seq}: {event:?}",
+                "EVENT_TRACE: {projection}[{persistence_id}]-{payload_type}#{seq}: {event:?}",
                 projection = ctx.projection_name,
                 payload_type = entry.payload_type,
                 seq = entry.sequence,
-                event = event,
             ),
             Err(error) => {
                 let type_name = std::any::type_name::<E>();
                 error!(
-                    "EVENT_TRACE: {projection} failed to convert {type_name} event from bytes: {error:?}",
+                    "EVENT_TRACE: {projection}[{persistence_id}] failed to convert {type_name} event from bytes: {error:?}",
                     projection = ctx.projection_name,
-            )
+                )
             },
         }
 
-        Ok(ProcessResult::Unchanged)
+        ProcessResult::Unchanged
     }
 }
 

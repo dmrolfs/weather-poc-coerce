@@ -42,7 +42,7 @@ impl WeatherView {
 
     pub fn apply_event(
         view: &WeatherView, event: &LocationZoneEvent,
-    ) -> Result<ProcessResult<Self>, ProjectionError> {
+    ) -> ProcessResult<Self, ProjectionError> {
         let mut result = view.clone();
 
         match event {
@@ -67,6 +67,6 @@ impl WeatherView {
             },
         }
 
-        Ok(ProcessResult::Changed(result))
+        ProcessResult::Changed(result)
     }
 }

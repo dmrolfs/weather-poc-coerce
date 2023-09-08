@@ -20,12 +20,14 @@ anyhow = "1.0.75"
 approx = "0.5.1"
 async-trait = "0.1.73"
 axum = { version = "0.6.20", default-features = true, features = ["macros", ] }
-chrono = "0.4.29"
+chrono = "0.4.30"
 clap = { version = "4.4.2", default-features = true, features = ["derive",] }
 config = "0.13.3"
 cuid2 = "0.1.2"
 either = "1.9.0"
 enumflags2 = { version = "0.7.7", features = ["serde"] }
+futures = "0.3.28"
+futures-util = "0.3.28"
 geojson = "0.24.1"
 governor = "0.6.0"
 hyper = "0.14.27"
