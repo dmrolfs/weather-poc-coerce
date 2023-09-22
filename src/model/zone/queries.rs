@@ -1,10 +1,19 @@
 use crate::model::zone::LocationZoneEvent;
 use crate::model::{ForecastDetail, WeatherAlert, WeatherFrame};
+use coerce_cqrs::postgres::{PostgresProjectionStorage, PostgresStorageConfig, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
-use coerce_cqrs::projection::ProjectionError;
+use coerce_cqrs::projection::{PersistenceId, ProjectionError};
 use iso8601_timestamp::Timestamp;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
 
-pub const WEATHER_QUERY_VIEW: &str = "weather_query";
+pub const ZONE_WEATHER_VIEW: &str = "zone_weather";
+pub static ZONE_WEATHER_TABLE: Lazy<TableName> =
+    Lazy::new(|| TableName::new(ZONE_WEATHER_VIEW).unwrap());
+pub static ZONE_OFFSET_TABLE: Lazy<TableName> =
+    Lazy::new(PostgresStorageConfig::default_projection_offsets_table);
+
+pub type WeatherProjection = Arc<PostgresProjectionStorage<WeatherView>>;
 
 #[derive(Debug, Clone, PartialEq, ToSchema, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +50,7 @@ impl WeatherView {
     }
 
     pub fn apply_event(
-        view: &WeatherView, event: &LocationZoneEvent,
+        _persistence_id: &PersistenceId, view: &WeatherView, event: LocationZoneEvent,
     ) -> ProcessResult<Self, ProjectionError> {
         let mut result = view.clone();
 
@@ -51,15 +60,15 @@ impl WeatherView {
             },
 
             LocationZoneEvent::ObservationAdded(frame) => {
-                result.current = Some(*frame.clone());
+                result.current = Some(*frame);
             },
 
             LocationZoneEvent::ForecastUpdated(forecast) => {
-                result.forecast = forecast.periods.clone();
+                result.forecast = forecast.periods;
             },
 
             LocationZoneEvent::AlertActivated(alert) => {
-                result.alert = Some(alert.clone());
+                result.alert = Some(alert);
             },
 
             LocationZoneEvent::AlertDeactivated => {

@@ -1,19 +1,37 @@
 use super::errors::RegistrarError;
-use super::protocol::{RegistrarCommand, RegistrarEvent};
+use super::protocol::{RegistrarAdminCommand, RegistrarEvent, UpdateWeather};
 use super::services::{RegistrarApi, RegistrarServices};
+use crate::model::registrar::view::{MONITORED_ZONES_TABLE, REGISTRAR_OFFSET_TABLE};
+use crate::model::registrar::{
+    MonitoredZonesView, RegistrarAggregateSupport, MONITORED_ZONES_VIEW,
+};
 use crate::model::LocationZoneCode;
+use crate::{settings, Settings};
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
+use coerce::actor::system::ActorSystem;
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistentActor, Recover};
+use coerce_cqrs::postgres::PostgresProjectionStorage;
+use coerce_cqrs::projection::processor::ProcessorSourceRef;
 use coerce_cqrs::{AggregateState, CommandResult};
 use once_cell::sync::OnceCell;
+use smol_str::SmolStr;
 use std::collections::HashSet;
-use tagid::{CuidGenerator, Entity, Id, IdGenerator, Label};
-use tokio::task::JoinHandle;
+use std::sync::Arc;
+use tagid::{Entity, Id, IdGenerator, Label};
 use tracing::Instrument;
 
 pub type RegistrarAggregate = coerce::actor::LocalActorRef<Registrar>;
+
+pub type RegistrarId = Id<Registrar, <<Registrar as Entity>::IdGen as IdGenerator>::IdType>;
+
+static SINGLETON_ID: OnceCell<RegistrarId> = OnceCell::new();
+
+#[inline]
+pub fn singleton_id() -> &'static RegistrarId {
+    SINGLETON_ID.get_or_init(Registrar::next_id)
+}
 
 static SERVICES: OnceCell<RegistrarServices> = OnceCell::new();
 
@@ -23,6 +41,31 @@ pub struct Registrar {
 }
 
 impl Registrar {
+    pub async fn initialize_aggregate_support(
+        journal_storage: ProcessorSourceRef, settings: &Settings, system: &ActorSystem,
+    ) -> Result<RegistrarAggregateSupport, RegistrarError> {
+        let storage_config = settings::storage_config_from(&settings.database, &settings.registrar);
+        let monitored_zones_storage = PostgresProjectionStorage::<MonitoredZonesView>::new(
+            MONITORED_ZONES_VIEW,
+            Some(MONITORED_ZONES_TABLE.clone()),
+            REGISTRAR_OFFSET_TABLE.clone(),
+            &storage_config,
+            system,
+        )
+        .await?;
+        let monitored_zones_projection = Arc::new(monitored_zones_storage);
+        let monitored_zones_processor = support::monitored_zones_processor(
+            journal_storage,
+            monitored_zones_projection.clone(),
+            system,
+        )?;
+
+        Ok(RegistrarAggregateSupport {
+            monitored_zones_processor,
+            monitored_zones_projection,
+        })
+    }
+
     /// Initializes the `RegistrarServices` used by the Registrar actor. This may be initialized
     /// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent
     /// calls.
@@ -35,14 +78,20 @@ impl Registrar {
     }
 }
 
-impl Entity for Registrar {
-    type IdGen = CuidGenerator;
+pub struct SingletonIdGenerator;
 
-    fn next_id() -> Id<Self, <Self::IdGen as IdGenerator>::IdType> {
-        static ID: OnceCell<Id<Registrar, <CuidGenerator as IdGenerator>::IdType>> =
-            OnceCell::new();
-        ID.get_or_init(|| Id::new()).clone()
+const REGISTRAR_SINGLETON_ID: &str = "<singleton>";
+
+impl IdGenerator for SingletonIdGenerator {
+    type IdType = SmolStr;
+
+    fn next_id_rep() -> Self::IdType {
+        SmolStr::new(REGISTRAR_SINGLETON_ID)
     }
+}
+
+impl Entity for Registrar {
+    type IdGen = SingletonIdGenerator;
 }
 
 #[async_trait]
@@ -53,34 +102,33 @@ impl PersistentActor for Registrar {
     }
 }
 
-impl AggregateState<RegistrarCommand, RegistrarEvent> for Registrar {
+impl AggregateState<RegistrarAdminCommand, RegistrarEvent> for Registrar {
     type Error = RegistrarError;
     type State = HashSet<LocationZoneCode>;
 
-    #[instrument(level = "debug", skip(_ctx))]
+    #[instrument(level = "debug")]
     fn handle_command(
-        &self, command: RegistrarCommand, _ctx: &mut ActorContext,
-    ) -> Result<Vec<RegistrarEvent>, Self::Error> {
-        use RegistrarCommand as C;
+        &self, command: &RegistrarAdminCommand,
+    ) -> CommandResult<Vec<RegistrarEvent>, Self::Error> {
+        use RegistrarAdminCommand as C;
         use RegistrarEvent as E;
 
         match command {
-            C::UpdateWeather => Ok(vec![]),
-            C::MonitorForecastZone(zone) if !self.location_codes.contains(&zone) => {
-                Ok(vec![E::ForecastZoneAdded(zone)])
+            C::MonitorForecastZone(zone) if !self.location_codes.contains(zone) => {
+                CommandResult::ok(vec![E::ForecastZoneAdded(zone.clone())])
             },
-            C::MonitorForecastZone(zone) => Err(RegistrarError::RejectedCommand(format!(
-                "already monitoring location zone code: {zone}"
-            ))),
-            C::ClearZoneMonitoring => Ok(vec![E::AllForecastZonesForgotten]),
-            C::ForgetForecastZone(zone) => Ok(vec![E::ForecastZoneForgotten(zone)]),
+            C::MonitorForecastZone(zone) => {
+                CommandResult::rejected(format!("already monitoring location zone code: {zone}"))
+            },
+            C::ClearZoneMonitoring => CommandResult::ok(vec![E::AllForecastZonesForgotten]),
+            C::ForgetForecastZone(zone) => {
+                CommandResult::ok(vec![E::ForecastZoneForgotten(zone.clone())])
+            },
         }
     }
 
-    #[instrument(level = "debug", skip(_ctx))]
-    fn apply_event(
-        &mut self, event: RegistrarEvent, _ctx: &mut ActorContext,
-    ) -> Option<Self::State> {
+    #[instrument(level = "debug")]
+    fn apply_event(&mut self, event: RegistrarEvent) -> Option<Self::State> {
         use RegistrarEvent as E;
 
         match event {
@@ -97,18 +145,61 @@ impl AggregateState<RegistrarCommand, RegistrarEvent> for Registrar {
 
         None // since state is simple handle here and avoid extra cloning.
     }
+
+    #[instrument(level = "debug", skip(ctx))]
+    fn then_run(&self, command: &RegistrarAdminCommand, ctx: &ActorContext) {
+        let system = ctx.system().clone();
+        if let RegistrarAdminCommand::MonitorForecastZone(zone) = command {
+            if !self.location_codes.contains(zone) {
+                let zone = zone.clone();
+                tokio::spawn(
+                    async move {
+                        if let Err(error) =
+                            Self::services().initialize_forecast_zone(&zone, &system).await
+                        {
+                            error!(?error, "failed to initialize forecast zone: {zone:?}");
+                        }
+                    }
+                    .instrument(debug_span!("registrar command service", ?command)),
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
-impl Handler<RegistrarCommand> for Registrar {
+impl Handler<UpdateWeather> for Registrar {
     #[instrument(level = "debug", skip(ctx))]
     async fn handle(
-        &mut self, command: RegistrarCommand, ctx: &mut ActorContext,
-    ) -> <RegistrarCommand as Message>::Result {
-        let events = match self.handle_command(command.clone(), ctx) {
-            Ok(events) => events,
-            Err(RegistrarError::RejectedCommand(msg)) => return CommandResult::Rejected(msg),
-            Err(error) => return error.into(),
+        &mut self, _: UpdateWeather, ctx: &mut ActorContext,
+    ) -> <UpdateWeather as Message>::Result {
+        let zones: Vec<_> = self.location_codes.iter().collect();
+        match Self::services().update_weather(&zones, ctx).await {
+            Ok(saga_id) => CommandResult::Ok(saga_id),
+            Err(error) => {
+                error!(
+                    ?error,
+                    "update weather service failed for location zones: {zones:?}"
+                );
+                CommandResult::Err(error.into())
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl Handler<RegistrarAdminCommand> for Registrar {
+    #[instrument(level = "debug", skip(ctx))]
+    async fn handle(
+        &mut self, command: RegistrarAdminCommand, ctx: &mut ActorContext,
+    ) -> <RegistrarAdminCommand as Message>::Result {
+        let events = match self.handle_command(&command) {
+            CommandResult::Ok(events) => events,
+            CommandResult::Rejected(msg) => return CommandResult::rejected(msg),
+            CommandResult::Err(error) => {
+                error!(?command, ?error, "Registrar command failed.");
+                return CommandResult::err(error.into());
+            },
         };
 
         debug!("[{}] RESULTING EVENTS: {events:?}", ctx.id());
@@ -116,61 +207,71 @@ impl Handler<RegistrarCommand> for Registrar {
             debug!("[{}] PERSISTING event: {event:?}", ctx.id());
             if let Err(error) = self.persist(event, ctx).await {
                 error!(?error, "[{}] failed to persist event: {error:?}", ctx.id());
-                return error.into();
+                return CommandResult::err(error.into());
             }
 
             debug!("[{}] APPLYING event: {event:?}", ctx.id());
-            let _ignored = self.apply_event(event.clone(), ctx);
+            let _ignored = self.apply_event(event.clone());
         }
 
-        self.then_run(command, events, ctx);
-        CommandResult::Ok(())
-    }
-}
+        self.then_run(&command, ctx);
 
-impl Registrar {
-    fn then_run(
-        &self, command: RegistrarCommand, _events: Vec<RegistrarEvent>, ctx: &ActorContext,
-    ) -> JoinHandle<()> {
-        let result = tokio::spawn(
-            async {
-                match command {
-                    RegistrarCommand::UpdateWeather => {
-                        let loc_codes: Vec<_> = self.location_codes.iter().collect();
-                        if let Err(error) = Self::services().update_weather(&loc_codes, ctx).await {
-                            error!(
-                                ?error,
-                                "update weather service failed for location codes: {loc_codes:?}"
-                            );
-                        }
-                    },
-
-                    RegistrarCommand::MonitorForecastZone(zone)
-                        if !self.location_codes.contains(&zone) =>
-                    {
-                        if let Err(error) =
-                            Self::services().initialize_forecast_zone(&zone, ctx).await
-                        {
-                            error!(?error, "failed to initialize forecast zone: {zone:?}");
-                        }
-                    },
-
-                    _ => {},
-                }
-            }
-            .instrument(debug_span!("registrar command service", ?command)),
-        );
-
-        result
+        CommandResult::ok(())
     }
 }
 
 #[async_trait]
 impl Recover<RegistrarEvent> for Registrar {
-    #[instrument(level = "debug", skip(ctx))]
-    async fn recover(&mut self, event: RegistrarEvent, ctx: &mut ActorContext) {
-        if let Some(new_locations) = self.apply_event(event, ctx) {
+    #[instrument(level = "debug", skip(_ctx))]
+    async fn recover(&mut self, event: RegistrarEvent, _ctx: &mut ActorContext) {
+        if let Some(new_locations) = self.apply_event(event) {
             self.location_codes = new_locations;
         }
+    }
+}
+
+pub mod support {
+    use crate::model::registrar::{
+        MonitoredZonesProjection, MonitoredZonesView, Registrar, MONITORED_ZONES_VIEW,
+    };
+    use coerce::actor::system::ActorSystem;
+    use coerce_cqrs::projection::processor::{
+        Processor, ProcessorEngineRef, ProcessorSourceRef, RegularInterval,
+    };
+    use coerce_cqrs::projection::{
+        PersistenceId, ProjectionApplicator, ProjectionError, ProjectionStorageRef,
+    };
+    use once_cell::sync::OnceCell;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[derive(Debug, Clone)]
+    pub struct RegistrarAggregateSupport {
+        pub monitored_zones_processor: ProcessorEngineRef,
+        pub monitored_zones_projection: MonitoredZonesProjection,
+    }
+
+    static MONITORED_ZONES_PROCESSOR: OnceCell<ProcessorEngineRef> = OnceCell::new();
+    pub fn monitored_zones_processor(
+        journal_storage: ProcessorSourceRef,
+        view_storage: ProjectionStorageRef<PersistenceId, MonitoredZonesView>,
+        system: &ActorSystem,
+    ) -> Result<ProcessorEngineRef, ProjectionError> {
+        let processor = MONITORED_ZONES_PROCESSOR.get_or_try_init(|| {
+            let monitored_zones_apply = ProjectionApplicator::new(MonitoredZonesView::apply_event);
+
+            Processor::builder_for::<Registrar, _, _, _, _>(MONITORED_ZONES_VIEW)
+                .with_entry_handler(monitored_zones_apply)
+                .with_system(system.clone())
+                .with_source(journal_storage.clone())
+                .with_projection_storage(view_storage.clone())
+                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .finish()
+                .map_err(|err| err.into())
+                .and_then(|engine| engine.run())
+                .map(Arc::new)
+        })?;
+
+        Ok(processor.clone())
     }
 }

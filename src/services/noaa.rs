@@ -188,7 +188,7 @@ pub struct HappyPathWeatherServices;
 #[async_trait]
 impl ZoneWeatherApi for HappyPathWeatherServices {
     async fn zone_observation(
-        &self, zone: &LocationZoneCode,
+        &self, _zone: &LocationZoneCode,
     ) -> Result<WeatherFrame, NoaaWeatherError> {
         use crate::model;
 
@@ -226,7 +226,7 @@ impl ZoneWeatherApi for HappyPathWeatherServices {
     }
 
     async fn zone_forecast(
-        &self, zone_type: LocationZoneType, zone: &LocationZoneCode,
+        &self, _zone_type: LocationZoneType, zone: &LocationZoneCode,
     ) -> Result<ZoneForecast, NoaaWeatherError> {
         Ok(ZoneForecast {
             zone_code: zone.to_string(),

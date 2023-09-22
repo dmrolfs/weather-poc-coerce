@@ -1,4 +1,4 @@
-pub use protocol::EventChannelCommand;
+pub use protocol::EventSubscriptionCommand;
 
 use crate::connect::EventEnvelope;
 use coerce::actor::context::ActorContext;
@@ -7,7 +7,8 @@ use coerce::actor::{Actor, ActorId, LocalActorRef};
 use inner::{MultiIndexSubscriptionMap, Subscription};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
+use tagid::{Entity, Label};
 
 mod protocol {
     use coerce::actor::ActorId;
@@ -15,7 +16,7 @@ mod protocol {
 
     #[derive(Debug, PartialEq, JsonMessage, Serialize, Deserialize)]
     #[result("()")]
-    pub enum EventChannelCommand {
+    pub enum EventSubscriptionCommand {
         SubscribeToPublisher {
             subscriber_id: ActorId,
             publisher_id: ActorId,
@@ -30,7 +31,7 @@ mod protocol {
     }
 }
 
-pub trait EventBroadcastTopic: Send + Sync + 'static {
+pub trait EventCommandTopic: Label + Send + Sync + 'static {
     type Subscriber: Actor + Handler<Self::Command>;
     type Event: Message + Debug + Serialize + DeserializeOwned;
     type Command: Message + Debug + Clone;
@@ -40,12 +41,36 @@ pub trait EventBroadcastTopic: Send + Sync + 'static {
     ) -> Vec<Self::Command>;
 }
 
-pub struct EventBroadcastChannel<T: EventBroadcastTopic> {
+pub type EventSubscriptionChannelRef<T> = LocalActorRef<EventSubscriptionChannel<T>>;
+
+pub struct EventSubscriptionChannel<T> {
     subscriptions: MultiIndexSubscriptionMap,
     topic: T,
 }
 
-impl<T: EventBroadcastTopic> EventBroadcastChannel<T> {
+impl<T> Debug for EventSubscriptionChannel<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let topic_name = std::any::type_name::<T>();
+        f.debug_struct("EventSubscriptionChannel")
+            .field("topic", &topic_name)
+            .field("subscriptions", &self.subscriptions)
+            .finish()
+    }
+}
+
+impl<T: Label> Label for EventSubscriptionChannel<T> {
+    type Labeler = tagid::MakeLabeling<Self>;
+
+    fn labeler() -> Self::Labeler {
+        tagid::MakeLabeling::<Self>::default()
+    }
+}
+
+impl<T: Label> Entity for EventSubscriptionChannel<T> {
+    type IdGen = tagid::CuidGenerator;
+}
+
+impl<T: EventCommandTopic> EventSubscriptionChannel<T> {
     pub fn new(topic: T) -> Self {
         Self {
             subscriptions: MultiIndexSubscriptionMap::default(),
@@ -101,24 +126,24 @@ impl<T: EventBroadcastTopic> EventBroadcastChannel<T> {
 }
 
 #[async_trait]
-impl<T: EventBroadcastTopic> Actor for EventBroadcastChannel<T> {}
+impl<T: Send + Sync + 'static> Actor for EventSubscriptionChannel<T> {}
 
 #[async_trait]
-impl<T: EventBroadcastTopic> Handler<EventChannelCommand> for EventBroadcastChannel<T> {
+impl<T: EventCommandTopic> Handler<EventSubscriptionCommand> for EventSubscriptionChannel<T> {
     #[instrument(level = "debug", skip(self, _ctx))]
     async fn handle(
-        &mut self, command: EventChannelCommand, _ctx: &mut ActorContext,
-    ) -> <EventChannelCommand as Message>::Result {
+        &mut self, command: EventSubscriptionCommand, _ctx: &mut ActorContext,
+    ) -> <EventSubscriptionCommand as Message>::Result {
         match command {
-            EventChannelCommand::SubscribeToPublisher { subscriber_id, publisher_id } => {
+            EventSubscriptionCommand::SubscribeToPublisher { subscriber_id, publisher_id } => {
                 self.add_subscriber(subscriber_id, [publisher_id])
             },
 
-            EventChannelCommand::SubscribeToPublishers { subscriber_id, publisher_ids } => {
+            EventSubscriptionCommand::SubscribeToPublishers { subscriber_id, publisher_ids } => {
                 self.add_subscriber(subscriber_id, publisher_ids)
             },
 
-            EventChannelCommand::Unsubscribe { subscriber_id } => {
+            EventSubscriptionCommand::Unsubscribe { subscriber_id } => {
                 self.remove_subscriber(&subscriber_id)
             },
         }
@@ -126,7 +151,7 @@ impl<T: EventBroadcastTopic> Handler<EventChannelCommand> for EventBroadcastChan
 }
 
 #[async_trait]
-impl<T: EventBroadcastTopic> Handler<EventEnvelope<T::Event>> for EventBroadcastChannel<T> {
+impl<T: EventCommandTopic> Handler<EventEnvelope<T::Event>> for EventSubscriptionChannel<T> {
     #[instrument(level = "debug", skip(self, ctx))]
     async fn handle(
         &mut self, envelope: EventEnvelope<T::Event>, ctx: &mut ActorContext,
@@ -142,7 +167,7 @@ mod inner {
     use coerce::actor::ActorId;
     use multi_index_map::MultiIndexMap;
 
-    #[derive(Debug, MultiIndexMap)]
+    #[derive(Debug, Clone, MultiIndexMap)]
     pub struct Subscription {
         #[multi_index(hashed_non_unique)]
         pub subscriber_id: ActorId,
@@ -152,7 +177,7 @@ mod inner {
     }
 
     impl Subscription {
-        pub const fn new(subscriber_id: &ActorId, publisher_id: ActorId) -> Self {
+        pub fn new(subscriber_id: &ActorId, publisher_id: ActorId) -> Self {
             Self { subscriber_id: subscriber_id.clone(), publisher_id }
         }
     }

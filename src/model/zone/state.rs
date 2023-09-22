@@ -1,7 +1,6 @@
 use super::{LocationZoneCommand, LocationZoneError, LocationZoneEvent};
 use crate::model::{LocationZoneCode, WeatherFrame, ZoneForecast};
-use coerce::actor::context::ActorContext;
-use coerce_cqrs::AggregateState;
+use coerce_cqrs::{AggregateState, CommandResult};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LocationZoneState {
@@ -11,7 +10,7 @@ pub enum LocationZoneState {
 
 impl Default for LocationZoneState {
     fn default() -> Self {
-        Self::Quiescent(QuiescentLocationZone::default())
+        Self::Quiescent(QuiescentLocationZone)
     }
 }
 
@@ -21,20 +20,18 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for LocationZoneStat
     type State = Self;
 
     fn handle_command(
-        &self, command: LocationZoneCommand, ctx: &mut ActorContext,
-    ) -> Result<Vec<LocationZoneEvent>, Self::Error> {
+        &self, command: &LocationZoneCommand,
+    ) -> CommandResult<Vec<LocationZoneEvent>, Self::Error> {
         match self {
-            Self::Quiescent(state) => state.handle_command(command, ctx),
-            Self::Active(state) => state.handle_command(command, ctx),
+            Self::Quiescent(state) => state.handle_command(command),
+            Self::Active(state) => state.handle_command(command),
         }
     }
 
-    fn apply_event(
-        &mut self, event: LocationZoneEvent, ctx: &mut ActorContext,
-    ) -> Option<Self::State> {
+    fn apply_event(&mut self, event: LocationZoneEvent) -> Option<Self::State> {
         match self {
-            Self::Quiescent(state) => state.apply_event(event, ctx),
-            Self::Active(state) => state.apply_event(event, ctx),
+            Self::Quiescent(state) => state.apply_event(event),
+            Self::Active(state) => state.apply_event(event),
         }
     }
 }
@@ -46,23 +43,23 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for QuiescentLocatio
     type Error = LocationZoneError;
     type State = LocationZoneState;
 
-    #[instrument(level = "debug", skip(_ctx))]
+    #[instrument(level = "debug")]
     fn handle_command(
-        &self, command: LocationZoneCommand, _ctx: &mut ActorContext,
-    ) -> Result<Vec<LocationZoneEvent>, Self::Error> {
+        &self, command: &LocationZoneCommand,
+    ) -> CommandResult<Vec<LocationZoneEvent>, Self::Error> {
         match command {
-            LocationZoneCommand::Subscribe(zone) => Ok(vec![LocationZoneEvent::Subscribed(zone)]),
+            LocationZoneCommand::Subscribe(zone) => {
+                CommandResult::Ok(vec![LocationZoneEvent::Subscribed(zone.clone())])
+            },
 
-            cmd => Err(LocationZoneError::RejectedCommand(format!(
+            cmd => CommandResult::Rejected(format!(
                 "LocationZone cannt handle command until it subscribes to a zone: {cmd:?}"
-            ))),
+            )),
         }
     }
 
-    #[instrument(level = "debug", skip(_ctx))]
-    fn apply_event(
-        &mut self, event: LocationZoneEvent, _ctx: &mut ActorContext,
-    ) -> Option<Self::State> {
+    #[instrument(level = "debug")]
+    fn apply_event(&mut self, event: LocationZoneEvent) -> Option<Self::State> {
         match event {
             LocationZoneEvent::Subscribed(zone_id) => {
                 Some(LocationZoneState::Active(Box::new(ActiveLocationZone {
@@ -94,36 +91,34 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for ActiveLocationZo
     type State = LocationZoneState;
 
     fn handle_command(
-        &self, command: LocationZoneCommand, ctx: &mut ActorContext,
-    ) -> Result<Vec<LocationZoneEvent>, Self::Error> {
+        &self, command: &LocationZoneCommand,
+    ) -> CommandResult<Vec<LocationZoneEvent>, Self::Error> {
         match command {
-            LocationZoneCommand::Observe => Ok(vec![]),
-            LocationZoneCommand::Forecast => Ok(vec![]),
+            LocationZoneCommand::Observe => CommandResult::Ok(vec![]),
+            LocationZoneCommand::Forecast => CommandResult::Ok(vec![]),
             LocationZoneCommand::NoteObservation(frame) => {
-                Ok(vec![LocationZoneEvent::ObservationAdded(Box::new(frame))])
+                CommandResult::Ok(vec![LocationZoneEvent::ObservationAdded(frame.clone())])
             },
             LocationZoneCommand::NoteForecast(forecast) => {
-                Ok(vec![LocationZoneEvent::ForecastUpdated(forecast)])
+                CommandResult::Ok(vec![LocationZoneEvent::ForecastUpdated(forecast.clone())])
             },
             LocationZoneCommand::NoteAlert(alert) => {
                 let event = match (self.active_alert, alert) {
-                    (false, Some(alert)) => Some(LocationZoneEvent::AlertActivated(alert)),
+                    (false, Some(alert)) => Some(LocationZoneEvent::AlertActivated(alert.clone())),
                     (true, None) => Some(LocationZoneEvent::AlertDeactivated),
                     _ => None,
                 };
 
-                Ok(event.into_iter().collect())
+                CommandResult::Ok(event.into_iter().collect())
             },
             LocationZoneCommand::Subscribe(new_zone) => {
                 debug!("{new_zone} zone subscribe previously set - ignoring");
-                Ok(vec![])
+                CommandResult::Ok(vec![])
             },
         }
     }
 
-    fn apply_event(
-        &mut self, event: LocationZoneEvent, ctx: &mut ActorContext,
-    ) -> Option<Self::State> {
+    fn apply_event(&mut self, event: LocationZoneEvent) -> Option<Self::State> {
         use LocationZoneEvent::*;
 
         let new_state = match event {

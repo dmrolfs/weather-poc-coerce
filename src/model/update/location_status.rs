@@ -15,24 +15,6 @@ pub struct LocationStatus {
     pub status: LocationUpdateStatus,
 }
 
-impl fmt::Debug for MultiIndexLocationStatusMap {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map()
-            .entries(self.iter().map(|(_, ls)| (&ls.zone, ls.status)))
-            .finish()
-    }
-}
-
-impl Clone for MultiIndexLocationStatusMap {
-    fn clone(&self) -> Self {
-        let mut result = MultiIndexLocationStatusMap::with_capacity(self.len());
-        for (_, ls) in self.iter() {
-            result.insert(ls.clone());
-        }
-        result
-    }
-}
-
 impl PartialEq for MultiIndexLocationStatusMap {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {

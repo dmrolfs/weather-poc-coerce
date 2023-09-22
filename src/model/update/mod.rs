@@ -1,21 +1,30 @@
+mod controller;
 mod location_status;
 mod saga;
-mod controller;
 mod services;
 mod state;
+mod view;
 
-use coerce::actor::system::ActorSystem;
-use coerce::actor::ActorId;
 pub use errors::UpdateLocationsError;
 pub use protocol::{UpdateLocationsCommand, UpdateLocationsEvent};
-pub use saga::{UpdateLocations, UpdateLocationsId, UpdateLocationsSaga};
+pub use saga::{
+    support::UpdateLocationsAggregateSupport, UpdateLocations, UpdateLocationsId,
+    UpdateLocationsSaga,
+};
 pub use services::{UpdateLocationServices, UpdateLocationServicesRef};
+pub use state::{
+    ActiveLocationsUpdate, FinishedLocationsUpdate, QuiescentLocationsUpdate, UpdateLocationsState,
+};
+pub use view::{UpdateLocationsHistory, UpdateLocationsHistoryProjection};
 
-use crate::connect::event_broadcast::EventBroadcastTopic;
-use crate::connect::EventEnvelope;
+use crate::connect::{EventCommandTopic, EventEnvelope};
 use crate::model::zone::{LocationZoneError, LocationZoneEvent};
 use crate::model::LocationZoneCode;
-use tagid::Entity;
+use coerce::actor::system::ActorSystem;
+use coerce::actor::ActorId;
+use coerce_cqrs::postgres::{PostgresStorageConfig, TableName};
+use once_cell::sync::Lazy;
+use tagid::{Entity, Label};
 
 #[inline]
 pub fn generate_id() -> UpdateLocationsId {
@@ -42,10 +51,14 @@ async fn note_zone_update_failure(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq)]
+pub const UPDATE_LOCATION_ZONE_SUBSCRIPTION: &str = "update_location_zone_subscription";
+pub static UPDATE_LOCATION_ZONE_SUBSCRIPTION_OFFSET_TABLE: Lazy<TableName> =
+    Lazy::new(PostgresStorageConfig::default_projection_offsets_table); //"projection_offset";
+
+#[derive(Debug, Clone, Label, PartialEq)]
 pub struct LocationZoneBroadcastTopic;
 
-impl EventBroadcastTopic for LocationZoneBroadcastTopic {
+impl EventCommandTopic for LocationZoneBroadcastTopic {
     type Subscriber = UpdateLocations;
     type Event = LocationZoneEvent;
     type Command = UpdateLocationsCommand;
@@ -70,31 +83,14 @@ impl EventBroadcastTopic for LocationZoneBroadcastTopic {
 }
 
 mod protocol {
-    use super::state::LocationUpdateStatus;
-    use crate::connect::EventEnvelope;
-    use crate::model::zone::LocationZoneEvent;
+    use super::errors::UpdateLocationsFailure;
+    use crate::model::update::state::LocationUpdateStatus;
     use crate::model::LocationZoneCode;
     use coerce_cqrs::CommandResult;
-
-    pub fn command_from_location_event(
-        envelope: EventEnvelope<LocationZoneEvent>,
-    ) -> Vec<UpdateLocationsCommand> {
-        use LocationZoneEvent as E;
-        use UpdateLocationsCommand as C;
-
-        let zone = LocationZoneCode::new(envelope.source_id().as_ref());
-        match envelope.event() {
-            E::ObservationAdded(_) => vec![C::NoteLocationObservationUpdate(zone)],
-            E::ForecastUpdated(_) => vec![C::NoteLocationForecastUpdate(zone)],
-            E::AlertDeactivated | E::AlertActivated(_) => {
-                vec![C::NoteLocationAlertStatusUpdate(zone)]
-            },
-            _ => vec![],
-        }
-    }
+    use strum_macros::Display;
 
     #[derive(Debug, Clone, PartialEq, Eq, JsonMessage, Serialize, Deserialize)]
-    #[result("CommandResult<()>")]
+    #[result("CommandResult<(), UpdateLocationsFailure>")]
     pub enum UpdateLocationsCommand {
         UpdateLocations(Vec<LocationZoneCode>),
         NoteLocationObservationUpdate(LocationZoneCode),
@@ -103,8 +99,9 @@ mod protocol {
         NoteLocationsUpdateFailure(LocationZoneCode),
     }
 
-    #[derive(Debug, Clone, PartialEq, JsonMessage, Serialize, Deserialize)]
+    #[derive(Debug, Display, Clone, PartialEq, JsonMessage, ToSchema, Serialize, Deserialize)]
     #[result("()")]
+    #[strum(serialize_all = "snake_case")]
     pub enum UpdateLocationsEvent {
         Started(Vec<LocationZoneCode>),
         LocationUpdated(LocationZoneCode, LocationUpdateStatus),
@@ -114,17 +111,36 @@ mod protocol {
 }
 
 mod errors {
+    use strum_macros::{Display, EnumDiscriminants};
     use thiserror::Error;
 
-    #[derive(Debug, Error)]
+    #[derive(Debug, Error, EnumDiscriminants)]
+    #[strum_discriminants(derive(Display, Serialize, Deserialize))]
+    #[strum_discriminants(name(UpdateLocationsFailure))]
     pub enum UpdateLocationsError {
-        #[error("rejected command: {0}")]
-        RejectedCommand(String),
+        #[error("{0}")]
+        Noaa(#[from] crate::services::noaa::NoaaWeatherError),
 
         #[error("{0}")]
-        Weather(#[from] crate::errors::WeatherError),
+        Connect(#[from] crate::connect::ConnectError),
+
+        #[error("failed to persist: {0}")]
+        Persist(#[from] coerce::persistent::PersistErr),
+
+        #[error("projection failure: {0}")]
+        Projection(#[from] coerce_cqrs::projection::ProjectionError),
 
         #[error("failed to notify actor: {0}")]
         ActorRef(#[from] coerce::actor::ActorRefErr),
+
+        #[error("{0}")]
+        ParseUrl(#[from] url::ParseError),
+    }
+
+    impl From<coerce::persistent::PersistErr> for UpdateLocationsFailure {
+        fn from(error: coerce::persistent::PersistErr) -> Self {
+            let update_err: UpdateLocationsError = error.into();
+            update_err.into()
+        }
     }
 }

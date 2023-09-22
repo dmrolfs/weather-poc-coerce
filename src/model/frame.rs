@@ -67,7 +67,7 @@ impl From<FeatureCollection> for WeatherFrame {
         geojson
             .features
             .into_iter()
-            .fold(PropertyAggregations::new(), fold_feature)
+            .fold(PropertyAggregations::default(), fold_feature)
             .into()
     }
 }
@@ -78,14 +78,16 @@ struct PropertyAggregations {
     properties: HashMap<QuantitativeProperty, QuantitativeAggregation>,
 }
 
-impl PropertyAggregations {
-    pub fn new() -> Self {
+impl Default for PropertyAggregations {
+    fn default() -> Self {
         Self {
             timestamp: Timestamp::now_utc(),
             properties: HashMap::with_capacity(QuantitativeProperty::VARIANTS.len()),
         }
     }
+}
 
+impl PropertyAggregations {
     pub fn property(&self, q_prop: &QuantitativeProperty) -> Option<QuantitativeValue> {
         self.properties.get(q_prop).cloned().map(|v| v.into())
     }

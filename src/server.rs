@@ -1,12 +1,16 @@
 mod api_errors;
+mod api_result;
+mod health_routes;
 mod state;
+mod weather_routes;
 
 use crate::server::api_errors::ApiError;
 use crate::server::state::AppState;
 use crate::settings::HttpApiSettings;
 use crate::Settings;
-use axum::http::{HeaderName, HeaderValue, Request, Response, StatusCode, Uri};
+use axum::http::{HeaderValue, Request, Response, StatusCode, Uri};
 use axum::{BoxError, Router};
+use coerce::actor::system::ActorSystem;
 use settings_loader::common::database::DatabaseSettings;
 use sqlx::PgPool;
 use std::fmt;
@@ -17,9 +21,9 @@ use tower::ServiceBuilder;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::{KeyExtractor, SmartIpKeyExtractor};
 use tower_governor::GovernorError;
-use tower_http::request_id::RequestId;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse};
 use tower_http::ServiceBuilderExt;
+use utoipa::OpenApi;
 use utoipa_swagger_ui::{SwaggerUi, Url as SwaggerUrl};
 
 pub type HttpJoinHandle = JoinHandle<Result<(), ApiError>>;
@@ -39,16 +43,21 @@ impl Server {
     #[instrument(level = "debug", skip(settings))]
     pub async fn build(settings: &Settings) -> Result<Self, ApiError> {
         let connection_pool = get_connection_pool(&settings.database);
-        let app_state = state::make_app_state(connection_pool).await?;
+        let app_state = AppState::new(settings, ActorSystem::new(), connection_pool).await?;
 
         let address = settings.http_api.server.address();
-        let listener = tokio::net::TcpListener::bind(&address).await?;
+        let listener = tokio::net::TcpListener::bind(&address)
+            .await
+            .map_err(|err| ApiError::Bootstrap(err.into()))?;
         tracing::info!(
             "{:?} API listening on {address}: {listener:?}",
             std::env::current_exe()
         );
-        let std_listener = listener.into_std()?;
-        let port = std_listener.local_addr()?.port();
+        let std_listener = listener.into_std().map_err(|err| ApiError::Bootstrap(err.into()))?;
+        let port = std_listener
+            .local_addr()
+            .map_err(|err| ApiError::Bootstrap(err.into()))?
+            .port();
 
         let server_handle = run_http_server(
             std_listener,
@@ -96,11 +105,13 @@ impl KeyExtractor for MyKeyExtractor {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Copy, Clone)]
 struct MyMakeRequestId;
 
 impl tower_http::request_id::MakeRequestId for MyMakeRequestId {
-    fn make_request_id<B>(&mut self, request: &Request<B>) -> Option<RequestId> {
+    fn make_request_id<B>(
+        &mut self, _request: &Request<B>,
+    ) -> Option<tower_http::request_id::RequestId> {
         let request_id = HeaderValue::from_str(::cuid2::create_id().as_str()).unwrap();
         Some(tower_http::request_id::RequestId::new(request_id))
     }
@@ -119,8 +130,6 @@ pub async fn run_http_server(
             .unwrap(),
     );
 
-    let x_request_id = HeaderName::from_static("x-request-id");
-
     let middleware_stack = ServiceBuilder::new()
         .layer(axum::error_handling::HandleErrorLayer::new(
             handle_api_error,
@@ -135,7 +144,7 @@ pub async fn run_http_server(
                 .make_span_with(DefaultMakeSpan::new().include_headers(true))
                 .on_response(DefaultOnResponse::new().include_headers(true)),
         )
-        .set_x_request_id(MyMakeRequestId::default())
+        .set_x_request_id(MyMakeRequestId)
         .propagate_x_request_id();
 
     let api_routes = Router::new()

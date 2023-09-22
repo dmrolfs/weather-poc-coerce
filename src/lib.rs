@@ -33,4 +33,5 @@ mod services;
 mod settings;
 pub mod setup_tracing;
 
+pub use server::Server;
 pub use settings::{CliOptions, Settings};

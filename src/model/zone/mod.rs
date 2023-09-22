@@ -2,14 +2,17 @@ mod actor;
 mod queries;
 mod state;
 
-use crate::model::{LocationZoneCode, WeatherAlert};
-pub use actor::{LocationZone, LocationZoneAggregate};
-use coerce::actor::system::ActorSystem;
-use coerce::actor::IntoActorId;
+pub use actor::{support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate};
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
-pub use queries::WeatherView;
+pub use queries::{
+    WeatherProjection, WeatherView, ZONE_OFFSET_TABLE, ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
+};
 pub use services::{LocationServices, LocationServicesRef};
+
+use crate::model::{LocationZoneCode, WeatherAlert};
+use coerce::actor::system::ActorSystem;
+use coerce::actor::IntoActorId;
 
 #[instrument(level = "trace", skip(system))]
 pub async fn notify_observe(
@@ -42,17 +45,18 @@ pub async fn notify_update_alert(
 }
 
 mod protocol {
+    use super::errors::LocationZoneFailure;
     use crate::model::{LocationZoneCode, WeatherAlert, WeatherFrame, ZoneForecast};
     use coerce_cqrs::CommandResult;
     use strum_macros::Display;
 
     #[derive(Debug, Clone, PartialEq, JsonMessage, Serialize, Deserialize)]
-    #[result("CommandResult<()>")]
+    #[result("CommandResult<(), LocationZoneFailure>")]
     pub enum LocationZoneCommand {
         Subscribe(LocationZoneCode),
         Observe,
         Forecast,
-        NoteObservation(WeatherFrame),
+        NoteObservation(Box<WeatherFrame>),
         NoteForecast(ZoneForecast),
         NoteAlert(Option<WeatherAlert>),
     }
@@ -102,17 +106,54 @@ mod services {
 }
 
 mod errors {
+    use strum_macros::{Display, EnumDiscriminants};
     use thiserror::Error;
 
-    #[derive(Debug, Error)]
+    #[derive(Debug, Error, EnumDiscriminants)]
+    #[strum_discriminants(derive(Display, Serialize, Deserialize))]
+    #[strum_discriminants(name(LocationZoneFailure))]
     pub enum LocationZoneError {
-        #[error("rejected command: {0}")]
-        RejectedCommand(String),
-
         #[error("{0}")]
         Noaa(#[from] crate::services::noaa::NoaaWeatherError),
 
+        #[error("failed to persist: {0}")]
+        Persist(#[from] coerce::persistent::PersistErr),
+
         #[error("failed to notify actor: {0}")]
         ActorRef(#[from] coerce::actor::ActorRefErr),
+
+        #[error("failure in postgres storage: {0}")]
+        PostgresStorage(#[from] coerce_cqrs::postgres::PostgresStorageError),
+
+        #[error("{0}")]
+        Projection(#[from] coerce_cqrs::projection::ProjectionError),
     }
+
+    impl From<coerce::persistent::PersistErr> for LocationZoneFailure {
+        fn from(error: coerce::persistent::PersistErr) -> Self {
+            let zone_error: LocationZoneError = error.into();
+            zone_error.into()
+        }
+    }
+
+    // #[derive(Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+    // pub enum LocationZoneFailure {
+    //     Noaa,
+    //     Server,
+    // }
+
+    // impl From<LocationZoneError> for LocationZoneFailure {
+    //     fn from(error: LocationZoneError) -> Self {
+    //         match error {
+    //             LocationZoneError::Noaa(_) => Self::Noaa,
+    //             LocationZoneError::ActorRef(_) => Self::Server,
+    //         }
+    //     }
+    // }
+
+    // impl From<coerce::persistent::PersistErr> for LocationZoneFailure {
+    //     fn from(_error: coerce::persistent::PersistErr) -> Self {
+    //         LocationZoneFailure::Server
+    //     }
+    // }
 }

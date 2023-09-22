@@ -1,17 +1,77 @@
 mod actor;
 mod services;
+mod view;
 
-pub use actor::{Registrar, RegistrarAggregate};
+pub use actor::{singleton_id, support::RegistrarAggregateSupport, Registrar, RegistrarAggregate};
+pub use errors::{RegistrarError, RegistrarFailure};
+pub use view::{MonitoredZonesProjection, MonitoredZonesView, MONITORED_ZONES_VIEW};
+
+use crate::model::registrar::protocol::{RegistrarAdminCommand as AC, UpdateWeather};
+use crate::model::update::UpdateLocationsId;
+use crate::model::LocationZoneCode;
+use coerce::actor::system::ActorSystem;
+use coerce::actor::IntoActorId;
+use coerce_cqrs::CommandResult;
+
+#[instrument(level = "trace", skip(system))]
+pub async fn update_weather(
+    system: &ActorSystem,
+) -> Result<Option<UpdateLocationsId>, RegistrarFailure> {
+    result_from(registrar_actor(system).await?.send(UpdateWeather).await?)
+}
+
+#[instrument(level = "trace", skip(system))]
+pub async fn clear_monitoring(system: &ActorSystem) -> Result<(), RegistrarFailure> {
+    result_from(registrar_actor(system).await?.send(AC::ClearZoneMonitoring).await?)
+}
+
+#[instrument(level = "trace", skip(system))]
+pub async fn monitor_forecast_zone(
+    zone: LocationZoneCode, system: &ActorSystem,
+) -> Result<(), RegistrarFailure> {
+    result_from(registrar_actor(system).await?.send(AC::MonitorForecastZone(zone)).await?)
+}
+
+#[instrument(level = "trace", skip(system))]
+pub async fn forget_forecast_zone(
+    zone: LocationZoneCode, system: &ActorSystem,
+) -> Result<(), RegistrarFailure> {
+    result_from(registrar_actor(system).await?.send(AC::ForgetForecastZone(zone)).await?)
+}
+
+#[inline]
+async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate, RegistrarError> {
+    let id = singleton_id().into_actor_id();
+    system.get_tracked_actor(id.clone()).await.ok_or(RegistrarError::ActorRef(
+        coerce::actor::ActorRefErr::NotFound(id),
+    ))
+}
+
+fn result_from<T, E>(command_result: CommandResult<T, E>) -> Result<T, RegistrarFailure>
+where
+    E: std::fmt::Display + Into<RegistrarFailure>,
+{
+    match command_result {
+        CommandResult::Ok(x) => Ok(x),
+        CommandResult::Rejected(msg) => Err(RegistrarError::RejectedCommand(msg).into()),
+        CommandResult::Err(error) => Err(error.into()),
+    }
+}
 
 mod protocol {
+    use super::errors::RegistrarFailure;
+    use crate::model::update::UpdateLocationsId;
     use crate::model::LocationZoneCode;
     use coerce_cqrs::CommandResult;
     use strum_macros::Display;
 
     #[derive(Debug, Clone, JsonMessage, PartialEq, Eq, Serialize, Deserialize)]
-    #[result("CommandResult<()>")]
-    pub enum RegistrarCommand {
-        UpdateWeather,
+    #[result("CommandResult<Option<UpdateLocationsId>, RegistrarFailure>")]
+    pub struct UpdateWeather;
+
+    #[derive(Debug, Clone, JsonMessage, PartialEq, Eq, Serialize, Deserialize)]
+    #[result("CommandResult<(), RegistrarFailure>")]
+    pub enum RegistrarAdminCommand {
         MonitorForecastZone(LocationZoneCode),
         ClearZoneMonitoring,
         ForgetForecastZone(LocationZoneCode),
@@ -24,30 +84,49 @@ mod protocol {
         ForecastZoneForgotten(LocationZoneCode),
         AllForecastZonesForgotten,
     }
-
-    // #[derive(Debug, Clone, JsonSnapshot, PartialEq, Eq, Serialize, Deserialize)]
-    // pub struct RegistrarSnapshot {
-    //     pub location_codes: HashSet<LocationZoneCode>,
-    // }
 }
 
 mod errors {
-    use crate::model::update::UpdateLocationsError;
-    use crate::model::zone::LocationZoneError;
+    use strum_macros::{Display, EnumDiscriminants};
     use thiserror::Error;
 
-    #[derive(Debug, Error)]
+    #[derive(Debug, Error, EnumDiscriminants)]
+    #[strum_discriminants(derive(Display, Serialize, Deserialize))]
+    #[strum_discriminants(name(RegistrarFailure))]
     pub enum RegistrarError {
         #[error("{0}")]
-        LocationZone(#[from] LocationZoneError),
+        LocationZone(#[from] crate::model::zone::LocationZoneError),
 
         #[error("{0}")]
-        UpdateForecastZones(#[from] UpdateLocationsError),
-
-        #[error("rejected registrar command: {0}")]
-        RejectedCommand(String),
+        UpdateLocations(#[from] crate::model::update::UpdateLocationsError),
 
         #[error("{0}")]
         ActorRef(#[from] coerce::actor::ActorRefErr),
+
+        #[error("failed to persist: {0}")]
+        Persist(#[from] coerce::persistent::PersistErr),
+
+        #[error("failure in postgres storage: {0}")]
+        PostgresStorage(#[from] coerce_cqrs::postgres::PostgresStorageError),
+
+        #[error("projection failure: {0}")]
+        Projection(#[from] coerce_cqrs::projection::ProjectionError),
+
+        #[error("command rejected: {0}")]
+        RejectedCommand(String),
+    }
+
+    impl From<coerce::actor::ActorRefErr> for RegistrarFailure {
+        fn from(error: coerce::actor::ActorRefErr) -> Self {
+            let reg_error: RegistrarError = error.into();
+            reg_error.into()
+        }
+    }
+
+    impl From<coerce::persistent::PersistErr> for RegistrarFailure {
+        fn from(error: coerce::persistent::PersistErr) -> Self {
+            let reg_error: RegistrarError = error.into();
+            reg_error.into()
+        }
     }
 }

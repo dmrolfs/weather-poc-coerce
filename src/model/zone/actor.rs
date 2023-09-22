@@ -1,14 +1,23 @@
 use super::state::LocationZoneState;
 use super::{LocationServicesRef, LocationZoneCommand, LocationZoneEvent};
+use crate::model::zone::{
+    LocationZoneAggregateSupport, LocationZoneError, WeatherView, ZONE_OFFSET_TABLE,
+    ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
+};
 use crate::model::{LocationZoneCode, LocationZoneType};
 use crate::services::noaa::ZoneWeatherApi;
+use crate::{settings, Settings};
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
+use coerce::actor::system::ActorSystem;
 use coerce::actor::LocalActorRef;
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistErr, PersistentActor, Recover, RecoverSnapshot};
-use coerce_cqrs::{AggregateState, ApplyAggregateEvent, CommandResult, SnapshotTrigger};
+use coerce_cqrs::postgres::PostgresProjectionStorage;
+use coerce_cqrs::projection::processor::ProcessorSourceRef;
+use coerce_cqrs::{AggregateState, CommandResult, SnapshotTrigger};
 use once_cell::sync::OnceCell;
+use std::sync::Arc;
 use tagid::{Entity, Label};
 use tracing::Instrument;
 
@@ -36,6 +45,30 @@ impl Default for LocationZone {
     }
 }
 
+//todo: make this into an `AggregateSupport` trait to be written via derive macro
+// unique aggregate support + fn initialize_aggregate(...) ..
+impl LocationZone {
+    pub async fn initialize_aggregate_support(
+        journal_storage: ProcessorSourceRef, settings: &Settings, system: &ActorSystem,
+    ) -> Result<LocationZoneAggregateSupport, LocationZoneError> {
+        let storage_config = settings::storage_config_from(&settings.database, &settings.zone);
+        let weather_view_storage = PostgresProjectionStorage::<WeatherView>::new(
+            ZONE_WEATHER_VIEW,
+            Some(ZONE_WEATHER_TABLE.clone()),
+            ZONE_OFFSET_TABLE.clone(),
+            &storage_config,
+            system,
+        )
+        .await?;
+        let weather_projection = Arc::new(weather_view_storage);
+
+        let weather_processor =
+            support::weather_processor(journal_storage, weather_projection.clone(), system)?;
+
+        Ok(LocationZoneAggregateSupport { weather_processor, weather_projection })
+    }
+}
+
 impl LocationZone {
     /// Initializes the `LocationServices` used by LocationZone actors. This may be initialized
     /// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent
@@ -47,8 +80,10 @@ impl LocationZone {
     pub fn services() -> LocationServicesRef {
         SERVICES.get().expect("LocationServices are not initialized").clone()
     }
+}
 
-    pub const fn new(services: LocationServicesRef) -> Self {
+impl LocationZone {
+    pub fn new(services: LocationServicesRef) -> Self {
         Self {
             state: LocationZoneState::default(),
             services,
@@ -78,7 +113,7 @@ impl LocationZone {
 
             let snapshot = LocationZoneSnapshot {
                 state: self.state.clone(),
-                snapshot_trigger: self.snapshot_trigger.clone(),
+                snapshot_trigger: self.snapshot_trigger,
             };
             self.snapshot(snapshot, ctx).await?;
         }
@@ -89,24 +124,27 @@ impl LocationZone {
     fn then_run(&self, command: LocationZoneCommand, ctx: &ActorContext) {
         match command {
             LocationZoneCommand::Observe => {
-                self.do_observe(&Self::location_zone_from_ctx(ctx), ctx);
+                self.do_observe(Self::location_zone_from_ctx(ctx), ctx);
             },
 
             LocationZoneCommand::Forecast => {
-                self.do_forecast(&Self::location_zone_from_ctx(ctx), ctx);
+                self.do_forecast(Self::location_zone_from_ctx(ctx), ctx);
             },
 
             _ => {},
         }
     }
 
-    fn do_observe(&self, zone: &LocationZoneCode, ctx: &ActorContext) {
+    fn do_observe(&self, zone: LocationZoneCode, ctx: &ActorContext) {
+        let zone_0 = zone.clone();
+        let services = self.services.clone();
+        let self_ref = ctx.actor_ref::<Self>();
+
         tokio::spawn(
-            async {
-                match self.services.zone_observation(zone).await {
+            async move {
+                match services.zone_observation(&zone).await {
                     Ok(frame) => {
-                        let self_ref = ctx.actor_ref::<LocationZone>();
-                        let note_cmd = LocationZoneCommand::NoteObservation(frame);
+                        let note_cmd = LocationZoneCommand::NoteObservation(Box::new(frame));
                         if let Err(error) = self_ref.notify(note_cmd) {
                             error!(
                                 ?error,
@@ -122,16 +160,19 @@ impl LocationZone {
                     },
                 }
             }
-            .instrument(debug_span!("observe location zone", %zone)),
+            .instrument(debug_span!("observe location zone", zone=%zone_0)),
         );
     }
 
-    fn do_forecast(&self, zone: &LocationZoneCode, ctx: &ActorContext) {
+    fn do_forecast(&self, zone: LocationZoneCode, ctx: &ActorContext) {
+        let zone_0 = zone.clone();
+        let services = self.services.clone();
+        let self_ref = ctx.actor_ref::<Self>();
+
         tokio::spawn(
-            async {
-                match self.services.zone_forecast(LocationZoneType::Forecast, zone).await {
+            async move {
+                match services.zone_forecast(LocationZoneType::Forecast, &zone).await {
                     Ok(forecast) => {
-                        let self_ref = ctx.actor_ref::<LocationZone>();
                         let note_cmd = LocationZoneCommand::NoteForecast(forecast);
                         if let Err(error) = self_ref.notify(note_cmd) {
                             error!(
@@ -148,7 +189,7 @@ impl LocationZone {
                     },
                 }
             }
-            .instrument(debug_span!("forecast location zone", %zone)),
+            .instrument(debug_span!("forecast location zone", zone=%zone_0)),
         );
     }
 }
@@ -173,9 +214,18 @@ impl Handler<LocationZoneCommand> for LocationZone {
     async fn handle(
         &mut self, command: LocationZoneCommand, ctx: &mut ActorContext,
     ) -> <LocationZoneCommand as Message>::Result {
-        let events = match self.state.handle_command(command.clone(), ctx) {
-            Ok(events) => events,
-            Err(error) => return error.into(),
+        let events = match self.state.handle_command(&command) {
+            CommandResult::Ok(events) => events,
+            CommandResult::Rejected(msg) => return CommandResult::Rejected(msg),
+            CommandResult::Err(error) => {
+                error!(
+                    ?command,
+                    ?error,
+                    "LocationZone({zone}) command failed",
+                    zone = ctx.id()
+                );
+                return CommandResult::Err(error.into());
+            },
         };
 
         debug!("[{}] RESULTING EVENTS: {events:?}", ctx.id());
@@ -183,17 +233,17 @@ impl Handler<LocationZoneCommand> for LocationZone {
             debug!("[{}] PERSISTING event: {event:?}", ctx.id());
             if let Err(error) = self.persist(&event, ctx).await {
                 error!(?event, "[{}] failed to persist event: {error:?}", ctx.id());
-                return error.into();
+                return CommandResult::Err(error.into());
             }
 
             debug!("[{}] APPLYING event: {event:?}", ctx.id());
-            if let Some(new_state) = self.state.apply_event(event, ctx) {
+            if let Some(new_state) = self.state.apply_event(event) {
                 self.state = new_state;
             }
 
             if let Err(error) = self.do_handle_snapshot(ctx).await {
                 error!(?error, "failed to snapshot");
-                return error.into();
+                return CommandResult::Err(error.into());
             }
         }
 
@@ -203,26 +253,26 @@ impl Handler<LocationZoneCommand> for LocationZone {
     }
 }
 
-impl ApplyAggregateEvent<LocationZoneEvent> for LocationZone {
-    type BaseType = Self;
-
-    fn apply_event(
-        &mut self, event: LocationZoneEvent, ctx: &mut ActorContext,
-    ) -> Option<Self::BaseType> {
-        if let Some(new_state) = self.state.apply_event(event, ctx) {
-            self.state = new_state;
-        }
-        None
-    }
-}
+// impl ApplyAggregateEvent<LocationZoneEvent> for LocationZone {
+//     type BaseType = Self;
+//
+//     fn apply_event(
+//         &mut self, event: LocationZoneEvent, ctx: &mut ActorContext,
+//     ) -> Option<Self::BaseType> {
+//         if let Some(new_state) = self.state.apply_event(event, ctx) {
+//             self.state = new_state;
+//         }
+//         None
+//     }
+// }
 
 #[async_trait]
 impl Recover<LocationZoneEvent> for LocationZone {
     #[instrument(level = "debug", skip(ctx))]
     async fn recover(&mut self, event: LocationZoneEvent, ctx: &mut ActorContext) {
         info!("[{}] RECOVERING from EVENT: {event:?}", ctx.id());
-        if let Some(new_type) = self.apply_event(event, ctx) {
-            *self = new_type;
+        if let Some(new_type) = self.state.apply_event(event) {
+            self.state = new_type;
         }
     }
 }
@@ -240,6 +290,49 @@ impl RecoverSnapshot<LocationZoneSnapshot> for LocationZone {
         info!("[{}] RECOVERING from SNAPSHOT: {snapshot:?}", ctx.id());
         self.state = snapshot.state;
         self.snapshot_trigger = snapshot.snapshot_trigger;
+    }
+}
+
+pub mod support {
+    use crate::model::zone::{LocationZone, WeatherProjection, WeatherView, ZONE_WEATHER_VIEW};
+    use coerce::actor::system::ActorSystem;
+    use coerce_cqrs::projection::processor::{
+        Processor, ProcessorEngineRef, ProcessorSourceRef, RegularInterval,
+    };
+    use coerce_cqrs::projection::{
+        PersistenceId, ProjectionApplicator, ProjectionError, ProjectionStorageRef,
+    };
+    use once_cell::sync::OnceCell;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[derive(Debug, Clone)]
+    pub struct LocationZoneAggregateSupport {
+        pub weather_processor: ProcessorEngineRef,
+        pub weather_projection: WeatherProjection,
+    }
+
+    static WEATHER_PROCESSOR: OnceCell<ProcessorEngineRef> = OnceCell::new();
+    pub fn weather_processor(
+        journal_storage: ProcessorSourceRef,
+        view_storage: ProjectionStorageRef<PersistenceId, WeatherView>, system: &ActorSystem,
+    ) -> Result<ProcessorEngineRef, ProjectionError> {
+        let processor = WEATHER_PROCESSOR.get_or_try_init(|| {
+            let weather_apply = ProjectionApplicator::new(WeatherView::apply_event);
+
+            Processor::builder_for::<LocationZone, _, _, _, _>(ZONE_WEATHER_VIEW)
+                .with_entry_handler(weather_apply)
+                .with_system(system.clone())
+                .with_source(journal_storage.clone())
+                .with_projection_storage(view_storage.clone())
+                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .finish()
+                .map_err(|err| err.into())
+                .and_then(|engine| engine.run())
+                .map(Arc::new)
+        })?;
+
+        Ok(processor.clone())
     }
 }
 

@@ -5,14 +5,13 @@ use coerce_cqrs::projection::processor::{
     ProcessEntry, ProcessResult, Processor, ProcessorContext, ProcessorEngine, ProcessorError,
     ProcessorSourceRef, Ready, RegularInterval,
 };
-use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorage};
+use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorageRef};
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Copy, Clone)]
-struct TracingApplicator<E: Message + Debug> {
+pub struct TracingApplicator<E: Message + Debug> {
     _marker: PhantomData<E>,
 }
 
@@ -27,20 +26,22 @@ impl<E: Message + Debug> ProcessEntry for TracingApplicator<E> {
     type Projection = ();
 
     fn apply_entry_to_projection(
-        &self, persistence_id: &PersistenceId, projection: &Self::Projection, entry: JournalEntry,
-        ctx: &ProcessorContext,
+        &self, projection: &Self::Projection, entry: JournalEntry, ctx: &ProcessorContext,
     ) -> ProcessResult<Self::Projection, ProjectionError> {
+        let seq = entry.sequence;
+        let payload_type = entry.payload_type.clone();
         match Self::from_bytes::<E>(entry) {
             Ok(event) => info!(
-                "EVENT_TRACE: {projection}[{persistence_id}]-{payload_type}#{seq}: {event:?}",
-                projection = ctx.projection_name,
-                payload_type = entry.payload_type,
-                seq = entry.sequence,
+                ?projection,
+                "EVENT_TRACE: {name}[{persistence_id}]-{payload_type}#{seq}: {event:?}",
+                name = ctx.projection_name,
+                persistence_id = ctx.persistence_id(),
             ),
             Err(error) => {
                 let type_name = std::any::type_name::<E>();
                 error!(
                     "EVENT_TRACE: {projection}[{persistence_id}] failed to convert {type_name} event from bytes: {error:?}",
+                    persistence_id = ctx.persistence_id(),
                     projection = ctx.projection_name,
                 )
             },
@@ -50,18 +51,22 @@ impl<E: Message + Debug> ProcessEntry for TracingApplicator<E> {
     }
 }
 
-pub fn make_tracing_processor_for<A, E, S>(
-    label: impl Into<String>, source: ProcessorSourceRef, projection_source: Arc<S>,
-) -> Result<ProcessorEngine<Ready<S, TracingApplicator<E>, RegularInterval>>, ProcessorError>
+pub type TracingProcessorEngine<E> =
+    ProcessorEngine<Ready<PersistenceId, (), TracingApplicator<E>, RegularInterval>>;
+
+#[allow(dead_code)]
+pub fn make_tracing_processor_for<A, E>(
+    label: impl Into<String>, source: ProcessorSourceRef,
+    projection_source: ProjectionStorageRef<PersistenceId, ()>,
+) -> Result<TracingProcessorEngine<E>, ProcessorError>
 where
     A: PersistentActor,
     E: Message + Debug,
-    S: ProjectionStorage,
 {
-    Processor::builder_for::<A, _, _, _>(label)
+    Processor::builder_for::<A, _, _, _, _>(label)
         .with_entry_handler(TracingApplicator::default())
         .with_source(source)
-        .with_projection_source(projection_source)
+        .with_projection_storage(projection_source)
         .with_interval_calculator(RegularInterval::of_duration(Duration::from_secs(60)))
         .finish()
 }

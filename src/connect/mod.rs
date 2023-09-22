@@ -1,4 +1,12 @@
-pub mod event_broadcast;
+mod event_subscription;
+mod subscription_processor;
+
+pub use errors::ConnectError;
+pub use event_subscription::{
+    EventCommandTopic, EventSubscriptionChannel, EventSubscriptionChannelRef,
+    EventSubscriptionCommand,
+};
+pub use subscription_processor::EventSubscriptionProcessor;
 
 use coerce::actor::message::Message;
 use coerce::actor::{ActorId, IntoActorId};
@@ -17,7 +25,6 @@ where
     E: Message + Serialize + DeserializeOwned,
 {
     inner: Arc<inner::EventEnvelopeRef<E>>,
-    // _marker: PhantomData<E>,
 }
 
 impl<E> fmt::Debug for EventEnvelope<E>
@@ -38,7 +45,6 @@ where
     E: Message + Serialize + DeserializeOwned,
 {
     fn clone(&self) -> Self {
-        // Self { inner: self.inner.clone(), _marker: self._marker.clone() }
         Self { inner: self.inner.clone() }
     }
 }
@@ -47,6 +53,7 @@ impl<E> EventEnvelope<E>
 where
     E: Message + Serialize + DeserializeOwned,
 {
+    #[allow(dead_code)]
     pub fn new(source_id: impl IntoActorId, event: E) -> Self {
         Self::new_with_metadata(source_id, event, HashMap::new())
     }
@@ -60,7 +67,6 @@ where
                 event,
                 metadata,
             }),
-            // _marker: PhantomData,
         }
     }
 
@@ -81,6 +87,7 @@ impl<E> EventEnvelope<E>
 where
     E: Clone + Message + Serialize + DeserializeOwned,
 {
+    #[allow(dead_code)]
     pub fn as_parts(&self) -> (ActorId, E, HashMap<String, String>) {
         (
             self.source_id().clone(),
@@ -161,11 +168,7 @@ where
             }
         }
 
-        impl<E0: Message> EventEnvelopeVisitor<E0> {
-            fn my_type_name() -> String {
-                format!("EventEnvelope<{}>", std::any::type_name::<E0>())
-            }
-        }
+        const EVENT_ENVELOPE_TYPE_NAME: &str = "EventEnvelope";
 
         impl<'de, E0> Visitor<'de> for EventEnvelopeVisitor<E0>
         where
@@ -174,7 +177,7 @@ where
             type Value = EventEnvelope<E0>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(Self::my_type_name().as_ref())
+                f.write_str(EVENT_ENVELOPE_TYPE_NAME)
             }
 
             fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
@@ -232,89 +235,104 @@ where
 
         const FIELDS: &[&str] = &["source_id", "event", "metadata"];
         deserializer.deserialize_struct(
-            EventEnvelopeVisitor::<E>::my_type_name().as_ref(),
+            EVENT_ENVELOPE_TYPE_NAME,
             FIELDS,
             EventEnvelopeVisitor::default(),
         )
     }
 }
 
-pub struct CommandEnvelope<C>
-where
-    C: Message,
-{
-    inner: Arc<inner::CommandEnvelopeRef<C>>,
-}
+mod errors {
+    use thiserror::Error;
 
-impl<C> fmt::Debug for CommandEnvelope<C>
-where
-    C: Message + fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MessageEnvelope")
-            .field("target_id", &self.inner.target_id)
-            .field("command", &self.inner.command)
-            .field("metadata", &self.inner.metadata)
-            .finish()
+    #[derive(Debug, Error)]
+    pub enum ConnectError {
+        #[error("failure in connect projection: {0}")]
+        Projection(#[from] coerce_cqrs::projection::ProjectionError),
+
+        #[error("{0}")]
+        ActorRef(#[from] coerce::actor::ActorRefErr),
     }
 }
 
-impl<C> Clone for CommandEnvelope<C>
-where
-    C: Message,
-{
-    fn clone(&self) -> Self {
-        // Self { inner: self.inner.clone(), _marker: self._marker.clone(), }
-        Self { inner: self.inner.clone() }
-    }
-}
-
-impl<C> CommandEnvelope<C>
-where
-    C: Message,
-{
-    pub fn new(target_id: impl IntoActorId, command: C) -> Self {
-        Self::new_with_metadata(target_id, command, HashMap::new())
-    }
-
-    pub fn new_with_metadata(
-        target_id: impl IntoActorId, command: C, metadata: HashMap<String, String>,
-    ) -> Self {
-        Self {
-            inner: Arc::new(inner::CommandEnvelopeRef {
-                target_id: target_id.into_actor_id(),
-                command,
-                metadata,
-            }),
-            // _marker: PhantomData,
-        }
-    }
-
-    pub fn target_id(&self) -> &ActorId {
-        &self.inner.target_id
-    }
-
-    pub fn command(&self) -> &C {
-        &self.inner.command
-    }
-
-    pub fn metadata(&self) -> &HashMap<String, String> {
-        &self.inner.metadata
-    }
-}
-
-impl<C> CommandEnvelope<C>
-where
-    C: Message + Clone,
-{
-    pub fn as_parts(&self) -> (ActorId, C, HashMap<String, String>) {
-        (
-            self.target_id().clone(),
-            self.command().clone(),
-            self.metadata().clone(),
-        )
-    }
-}
+// pub struct CommandEnvelope<C>
+// where
+//     C: Message,
+// {
+//     inner: Arc<inner::CommandEnvelopeRef<C>>,
+// }
+//
+// impl<C> fmt::Debug for CommandEnvelope<C>
+// where
+//     C: Message + fmt::Debug,
+// {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         f.debug_struct("MessageEnvelope")
+//             .field("target_id", &self.inner.target_id)
+//             .field("command", &self.inner.command)
+//             .field("metadata", &self.inner.metadata)
+//             .finish()
+//     }
+// }
+//
+// impl<C> Clone for CommandEnvelope<C>
+// where
+//     C: Message,
+// {
+//     fn clone(&self) -> Self {
+//         // Self { inner: self.inner.clone(), _marker: self._marker.clone(), }
+//         Self { inner: self.inner.clone() }
+//     }
+// }
+//
+// impl<C> CommandEnvelope<C>
+// where
+//     C: Message,
+// {
+//     #[allow(dead_code)]
+//     pub fn new(target_id: impl IntoActorId, command: C) -> Self {
+//         Self::new_with_metadata(target_id, command, HashMap::new())
+//     }
+//
+//     #[allow(dead_code)]
+//     pub fn new_with_metadata(
+//         target_id: impl IntoActorId, command: C, metadata: HashMap<String, String>,
+//     ) -> Self {
+//         Self {
+//             inner: Arc::new(inner::CommandEnvelopeRef {
+//                 target_id: target_id.into_actor_id(),
+//                 command,
+//                 metadata,
+//             }),
+//             // _marker: PhantomData,
+//         }
+//     }
+//
+//     pub fn target_id(&self) -> &ActorId {
+//         &self.inner.target_id
+//     }
+//
+//     pub fn command(&self) -> &C {
+//         &self.inner.command
+//     }
+//
+//     pub fn metadata(&self) -> &HashMap<String, String> {
+//         &self.inner.metadata
+//     }
+// }
+//
+// impl<C> CommandEnvelope<C>
+// where
+//     C: Message + Clone,
+// {
+//     pub fn as_parts(&self) -> (ActorId, C, HashMap<String, String>) {
+//         (
+//             self.target_id().clone(),
+//             self.command().clone(),
+//             self.metadata().clone(),
+//         )
+//     }
+// }
 
 mod inner {
     use coerce::actor::message::Message;
@@ -330,12 +348,12 @@ mod inner {
         pub metadata: HashMap<String, String>,
     }
 
-    pub struct CommandEnvelopeRef<C>
-    where
-        C: Message,
-    {
-        pub target_id: ActorId,
-        pub command: C,
-        pub metadata: HashMap<String, String>,
-    }
+    // pub struct CommandEnvelopeRef<C>
+    // where
+    //     C: Message,
+    // {
+    //     pub target_id: ActorId,
+    //     pub command: C,
+    //     pub metadata: HashMap<String, String>,
+    // }
 }
