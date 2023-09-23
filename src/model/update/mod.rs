@@ -9,7 +9,7 @@ pub use errors::UpdateLocationsError;
 pub use protocol::{UpdateLocationsCommand, UpdateLocationsEvent};
 pub use saga::{
     support::UpdateLocationsAggregateSupport, UpdateLocations, UpdateLocationsId,
-    UpdateLocationsSaga,
+    UpdateLocationsSaga, update_locations_saga
 };
 pub use services::{UpdateLocationServices, UpdateLocationServicesRef};
 pub use state::{

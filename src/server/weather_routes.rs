@@ -81,11 +81,6 @@ async fn update_weather(State(system): State<ActorSystem>) -> impl IntoResponse 
 #[serde(transparent)]
 struct UpdateProcessId(String);
 
-// impl Into<PersistenceId> for UpdateProcessId {
-//     fn into(self) -> PersistenceId {
-//         PersistenceId::from_aggregate_id::<UpdateLocations>(self.0.as_str())
-//     }
-// }
 impl From<UpdateProcessId> for PersistenceId {
     fn from(id: UpdateProcessId) -> Self {
         PersistenceId::from_aggregate_id::<UpdateLocations>(id.0.as_str())

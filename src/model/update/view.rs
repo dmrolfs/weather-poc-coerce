@@ -1,11 +1,10 @@
 use super::state::UpdateLocationsState;
 use crate::model::update::UpdateLocationsEvent;
-use coerce_cqrs::postgres::{PostgresProjectionStorage, PostgresStorageConfig, TableName};
+use coerce_cqrs::postgres::{PostgresStorageConfig, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorageRef};
 use coerce_cqrs::AggregateState;
 use once_cell::sync::Lazy;
-use std::sync::Arc;
 
 pub const UPDATE_LOCATIONS_HISTORY_VIEW: &str = "update_locations_history";
 pub static UPDATE_LOCATIONS_HISTORY_TABLE: Lazy<TableName> =

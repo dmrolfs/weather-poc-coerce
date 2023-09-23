@@ -7,8 +7,21 @@ use coerce::actor::{ActorId, ActorRefErr};
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
+use once_cell::sync::OnceCell;
 
 pub type UpdateLocationServicesRef = Arc<UpdateLocationServices>;
+
+static SERVICES: OnceCell<UpdateLocationServicesRef> = OnceCell::new();
+
+/// Initializes the `UpdateLocationServices` used by `UpdateLocations` actors. This may be
+/// initialized once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent calls.
+pub fn initialize_services(services: UpdateLocationServicesRef) -> Result<(), UpdateLocationServicesRef> {
+    SERVICES.set(services)
+}
+
+pub fn services() -> UpdateLocationServicesRef {
+    SERVICES.get().expect("UpdateLocationServices are not initialized").clone()
+}
 
 #[derive(Clone)]
 pub struct UpdateLocationServices {

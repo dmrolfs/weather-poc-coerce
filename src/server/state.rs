@@ -1,22 +1,14 @@
-use crate::model::registrar::{self, MonitoredZonesProjection, RegistrarAggregateSupport};
-use crate::model::update::{
-    self, UpdateLocationsAggregateSupport, UpdateLocationsHistoryProjection,
-};
-use crate::model::zone::{
-    self, LocationZoneAggregateSupport, WeatherProjection, WeatherView, ZONE_OFFSET_TABLE,
-    ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
-};
+use crate::model::registrar::{MonitoredZonesProjection, RegistrarAggregateSupport, RegistrarServices};
+use crate::model::update::{UpdateLocationsAggregateSupport, UpdateLocationServices, UpdateLocationsHistoryProjection};
+use crate::model::zone::{LocationServices, LocationZoneAggregateSupport, WeatherProjection};
 use crate::model::{LocationZone, Registrar, UpdateLocations};
-use crate::server::api_errors::{ApiBootstrapError, ApiError};
+use crate::server::api_errors::ApiBootstrapError;
 use crate::services::noaa::{NoaaWeatherApi, NoaaWeatherServices};
 use crate::{settings, Settings};
 use anyhow::anyhow;
 use axum::extract::FromRef;
 use coerce::actor::system::ActorSystem;
-use coerce::persistent::provider::StorageProvider;
-use coerce_cqrs::postgres::{
-    PostgresProjectionStorage, PostgresStorageConfig, PostgresStorageProvider,
-};
+use coerce_cqrs::postgres::{PostgresStorageConfig, PostgresStorageProvider};
 use coerce_cqrs::projection::processor::{ProcessorSourceProvider, ProcessorSourceRef};
 use sqlx::PgPool;
 use std::fmt;
@@ -109,8 +101,17 @@ impl AppState {
         let journal_storage =
             do_initialize_journal_storage(journal_storage_config, &system).await?;
 
+        let location_services = Arc::new(LocationServices::new(noaa.clone()));
+        let update_services = Arc::new(UpdateLocationServices::new(noaa, location_subscription_actor_id, system.clone()));
+        let registrar_services = Arc::new(RegistrarServices::full(location_services.clone(), update_services.clone()));
+
         let registrar_support =
-            Registrar::initialize_aggregate_support(journal_storage.clone(), settings, &system)
+            Registrar::initialize_aggregate_support(
+                journal_storage.clone(),
+                registrar_services,
+                settings,
+                &system
+            )
                 .await?;
 
         let location_zone_support =
@@ -132,50 +133,6 @@ impl AppState {
             system,
             db_pool,
         })
-
-        // //todo: would like to better place these connective channel and related parts;
-        // // e.g., location and relay in zone module; and,  update in update module
-        // let (location_tx, location_rx) = mpsc::channel(num_cpus::get());
-        // let (update_tx, update_rx) = mpsc::channel(num_cpus::get());
-        //
-        // let location_broadcast_query: EventBroadcastQuery<LocationZone> =
-        //     EventBroadcastQuery::new(num_cpus::get());
-        // let location_subscriber =
-        //     location_broadcast_query.subscribe(update_tx.clone(), update::location_event_to_command);
-        //
-        // let (update_locations_agg, update_locations_view) = update::make_update_locations_saga(
-        //     location_tx,
-        //     (update_tx, update_rx),
-        //     &location_subscriber,
-        //     noaa.clone(),
-        //     db_pool.clone(),
-        // )
-        // .await;
-        //
-        // let (location_agg, weather_view) =
-        //     zone::make_location_zone_aggregate_view(location_broadcast_query, noaa, db_pool.clone());
-        //
-        // let (registrar_agg, monitored_zones_view) = registrar::make_registrar_aggregate(
-        //     db_pool.clone(),
-        //     location_agg.clone(),
-        //     update_locations_agg.clone(),
-        // );
-        //
-        // let location_relay = CommandRelay::new(location_agg.clone(), location_rx);
-        // let location_relay_handler = Arc::new(location_relay.run());
-        // let location_subscriber_handler = Arc::new(location_subscriber.run());
-        //
-        // Ok(AppState {
-        //     registrar_agg,
-        //     update_locations_agg,
-        //     location_agg,
-        //     weather_view,
-        //     monitored_zones_view,
-        //     update_locations_view,
-        //     db_pool,
-        //     location_relay_handler,
-        //     location_subscriber_handler,
-        // })
     }
 }
 

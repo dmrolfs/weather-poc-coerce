@@ -21,6 +21,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tagid::{Entity, Id, IdGenerator, Label};
 use tracing::Instrument;
+use crate::model::registrar::services::RegistrarServicesRef;
+use crate::model::update::UpdateLocationServicesRef;
+use crate::model::zone::LocationServicesRef;
 
 pub type RegistrarAggregate = coerce::actor::LocalActorRef<Registrar>;
 
@@ -42,7 +45,10 @@ pub struct Registrar {
 
 impl Registrar {
     pub async fn initialize_aggregate_support(
-        journal_storage: ProcessorSourceRef, settings: &Settings, system: &ActorSystem,
+        journal_storage: ProcessorSourceRef,
+        services: RegistrarServicesRef,
+        settings: &Settings,
+        system: &ActorSystem,
     ) -> Result<RegistrarAggregateSupport, RegistrarError> {
         let storage_config = settings::storage_config_from(&settings.database, &settings.registrar);
         let monitored_zones_storage = PostgresProjectionStorage::<MonitoredZonesView>::new(
@@ -60,10 +66,7 @@ impl Registrar {
             system,
         )?;
 
-        Ok(RegistrarAggregateSupport {
-            monitored_zones_processor,
-            monitored_zones_projection,
-        })
+        Ok(RegistrarAggregateSupport { monitored_zones_processor, monitored_zones_projection, services, })
     }
 
     /// Initializes the `RegistrarServices` used by the Registrar actor. This may be initialized
@@ -244,11 +247,13 @@ pub mod support {
     use once_cell::sync::OnceCell;
     use std::sync::Arc;
     use std::time::Duration;
+    use crate::model::registrar::services::RegistrarServicesRef;
 
     #[derive(Debug, Clone)]
     pub struct RegistrarAggregateSupport {
         pub monitored_zones_processor: ProcessorEngineRef,
         pub monitored_zones_projection: MonitoredZonesProjection,
+        pub services: RegistrarServicesRef,
     }
 
     static MONITORED_ZONES_PROCESSOR: OnceCell<ProcessorEngineRef> = OnceCell::new();

@@ -1,16 +1,13 @@
 use super::state::UpdateLocationsState;
 use super::{UpdateLocationsCommand, UpdateLocationsEvent};
-use crate::model::update::{
-    UpdateLocationServices, UpdateLocationServicesRef, UpdateLocationsAggregateSupport,
-    UpdateLocationsError,
-};
+use crate::model::update::{UpdateLocationServices, UpdateLocationServicesRef, UpdateLocationsAggregateSupport, UpdateLocationsError, services};
 use crate::model::LocationZoneCode;
 use crate::services::noaa::{NoaaWeatherApi, NoaaWeatherServices};
 use crate::Settings;
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
 use coerce::actor::system::ActorSystem;
-use coerce::actor::LocalActorRef;
+use coerce::actor::{IntoActor, LocalActorRef};
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistentActor, Recover};
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
@@ -24,6 +21,15 @@ use url::Url;
 #[allow(dead_code)]
 pub type UpdateLocationsSaga = LocalActorRef<UpdateLocations>;
 pub type UpdateLocationsId = CuidId<UpdateLocations>;
+
+pub async fn update_locations_saga(system: &ActorSystem) -> Result<(UpdateLocationsId, UpdateLocationsSaga), UpdateLocationsError> {
+    let saga_id = super::generate_id();
+    let services = services::services();
+    let saga = UpdateLocations::new(services)
+        .into_actor(Some(saga_id.clone()), system)
+        .await?;
+    Ok((saga_id, saga))
+}
 
 #[derive(Debug, Clone, Label)]
 pub struct UpdateLocations {

@@ -2,7 +2,7 @@ use super::state::LocationZoneState;
 use super::{LocationServicesRef, LocationZoneCommand, LocationZoneEvent};
 use crate::model::zone::{
     LocationZoneAggregateSupport, LocationZoneError, WeatherView, ZONE_OFFSET_TABLE,
-    ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
+    ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW, services::services
 };
 use crate::model::{LocationZoneCode, LocationZoneType};
 use crate::services::noaa::ZoneWeatherApi;
@@ -16,7 +16,6 @@ use coerce::persistent::{PersistErr, PersistentActor, Recover, RecoverSnapshot};
 use coerce_cqrs::postgres::PostgresProjectionStorage;
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
 use coerce_cqrs::{AggregateState, CommandResult, SnapshotTrigger};
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tagid::{Entity, Label};
 use tracing::Instrument;
@@ -24,7 +23,13 @@ use tracing::Instrument;
 pub type LocationZoneId = LocationZoneCode;
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
-static SERVICES: OnceCell<LocationServicesRef> = OnceCell::new();
+pub async fn location_zone_for(zone: &LocationZoneCode, system: &ActorSystem) -> Result<LocationZoneAggregate, LocationZoneError> {
+    use coerce::actor::IntoActor;
+
+    let aggregate_id = zone.to_string();
+    let aggregate = LocationZone::new(services()).into_actor(Some(aggregate_id), system).await?;
+    Ok(aggregate)
+}
 
 #[derive(Debug, Clone, Label)]
 pub struct LocationZone {
@@ -39,11 +44,11 @@ impl PartialEq for LocationZone {
     }
 }
 
-impl Default for LocationZone {
-    fn default() -> Self {
-        Self::new(Self::services())
-    }
-}
+// impl Default for LocationZone {
+//     fn default() -> Self {
+//         Self::new(Self::services())
+//     }
+// }
 
 //todo: make this into an `AggregateSupport` trait to be written via derive macro
 // unique aggregate support + fn initialize_aggregate(...) ..
@@ -66,19 +71,6 @@ impl LocationZone {
             support::weather_processor(journal_storage, weather_projection.clone(), system)?;
 
         Ok(LocationZoneAggregateSupport { weather_processor, weather_projection })
-    }
-}
-
-impl LocationZone {
-    /// Initializes the `LocationServices` used by LocationZone actors. This may be initialized
-    /// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent
-    /// calls.
-    pub fn initialize_services(services: LocationServicesRef) -> Result<(), LocationServicesRef> {
-        SERVICES.set(services)
-    }
-
-    pub fn services() -> LocationServicesRef {
-        SERVICES.get().expect("LocationServices are not initialized").clone()
     }
 }
 

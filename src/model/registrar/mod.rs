@@ -5,6 +5,7 @@ mod view;
 pub use actor::{singleton_id, support::RegistrarAggregateSupport, Registrar, RegistrarAggregate};
 pub use errors::{RegistrarError, RegistrarFailure};
 pub use view::{MonitoredZonesProjection, MonitoredZonesView, MONITORED_ZONES_VIEW};
+pub use services::{RegistrarServices, RegistrarServicesRef};
 
 use crate::model::registrar::protocol::{RegistrarAdminCommand as AC, UpdateWeather};
 use crate::model::update::UpdateLocationsId;

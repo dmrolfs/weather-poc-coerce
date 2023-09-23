@@ -48,9 +48,7 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for QuiescentLocatio
         &self, command: &LocationZoneCommand,
     ) -> CommandResult<Vec<LocationZoneEvent>, Self::Error> {
         match command {
-            LocationZoneCommand::Subscribe(zone) => {
-                CommandResult::Ok(vec![LocationZoneEvent::Subscribed(zone.clone())])
-            },
+            LocationZoneCommand::Start => CommandResult::Ok(vec![LocationZoneEvent::Started]),
 
             cmd => CommandResult::Rejected(format!(
                 "LocationZone cannt handle command until it subscribes to a zone: {cmd:?}"
@@ -61,9 +59,8 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for QuiescentLocatio
     #[instrument(level = "debug")]
     fn apply_event(&mut self, event: LocationZoneEvent) -> Option<Self::State> {
         match event {
-            LocationZoneEvent::Subscribed(zone_id) => {
+            LocationZoneEvent::Started => {
                 Some(LocationZoneState::Active(Box::new(ActiveLocationZone {
-                    zone_id,
                     weather: None,
                     forecast: None,
                     active_alert: false,
@@ -80,7 +77,6 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for QuiescentLocatio
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveLocationZone {
-    pub zone_id: LocationZoneCode,
     pub weather: Option<WeatherFrame>,
     pub forecast: Option<ZoneForecast>,
     pub active_alert: bool,
@@ -111,8 +107,8 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for ActiveLocationZo
 
                 CommandResult::Ok(event.into_iter().collect())
             },
-            LocationZoneCommand::Subscribe(new_zone) => {
-                debug!("{new_zone} zone subscribe previously set - ignoring");
+            LocationZoneCommand::Start => {
+                debug!("zone subscribe previously set - ignoring");
                 CommandResult::Ok(vec![])
             },
         }

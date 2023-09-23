@@ -1,5 +1,5 @@
 use crate::model::zone::LocationZoneEvent;
-use crate::model::{ForecastDetail, WeatherAlert, WeatherFrame};
+use crate::model::{ForecastDetail, LocationZoneCode, WeatherAlert, WeatherFrame};
 use coerce_cqrs::postgres::{PostgresProjectionStorage, PostgresStorageConfig, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::{PersistenceId, ProjectionError};
@@ -50,13 +50,13 @@ impl WeatherView {
     }
 
     pub fn apply_event(
-        _persistence_id: &PersistenceId, view: &WeatherView, event: LocationZoneEvent,
+        persistence_id: &PersistenceId, view: &WeatherView, event: LocationZoneEvent,
     ) -> ProcessResult<Self, ProjectionError> {
         let mut result = view.clone();
 
         match event {
-            LocationZoneEvent::Subscribed(zone) => {
-                result.zone_code = zone.to_string();
+            LocationZoneEvent::Started => {
+                result.zone_code = persistence_id.id.to_string();
             },
 
             LocationZoneEvent::ObservationAdded(frame) => {

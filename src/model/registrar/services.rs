@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use crate::model::registrar::errors::RegistrarError;
 use crate::model::update::{UpdateLocationServicesRef, UpdateLocationsCommand, UpdateLocationsId};
 use crate::model::zone::{LocationServicesRef, LocationZoneAggregate, LocationZoneCommand};
-use crate::model::{LocationZone, LocationZoneCode, UpdateLocations};
+use crate::model::{LocationZone, LocationZoneCode, update, UpdateLocations, zone};
 use coerce::actor::context::ActorContext;
 use coerce::actor::system::ActorSystem;
 use coerce::actor::IntoActor;
@@ -16,6 +17,8 @@ pub trait RegistrarApi: Sync + Send {
         &self, zones: &[&LocationZoneCode], ctx: &ActorContext,
     ) -> Result<Option<UpdateLocationsId>, RegistrarError>;
 }
+
+pub type RegistrarServicesRef = Arc<RegistrarServices>;
 
 #[derive(Debug, Clone)]
 pub enum RegistrarServices {
@@ -63,7 +66,7 @@ impl RegistrarApi for RegistrarServices {
 
 #[derive(Debug, Clone)]
 pub struct FullRegistrarServices {
-    location_services: LocationServicesRef,
+    // location_services: LocationServicesRef,
     update_services: UpdateLocationServicesRef,
 }
 
@@ -71,18 +74,18 @@ impl FullRegistrarServices {
     pub const fn new(
         location_services: LocationServicesRef, update_services: UpdateLocationServicesRef,
     ) -> Self {
-        Self { location_services, update_services }
+        Self { update_services }
     }
 
-    pub async fn location_zone_for(
-        &self, zone: &LocationZoneCode, system: &ActorSystem,
-    ) -> Result<LocationZoneAggregate, RegistrarError> {
-        let aggregate_id = zone.to_string();
-        let aggregate = LocationZone::new(self.location_services.clone())
-            .into_actor(Some(aggregate_id), system)
-            .await?;
-        Ok(aggregate)
-    }
+    // pub async fn location_zone_for(
+    //     &self, zone: &LocationZoneCode, system: &ActorSystem,
+    // ) -> Result<LocationZoneAggregate, RegistrarError> {
+    //     let aggregate_id = zone.to_string();
+    //     let aggregate = LocationZone::new(self.location_services.clone())
+    //         .into_actor(Some(aggregate_id), system)
+    //         .await?;
+    //     Ok(aggregate)
+    // }
 }
 
 #[async_trait]
@@ -90,8 +93,8 @@ impl RegistrarApi for FullRegistrarServices {
     async fn initialize_forecast_zone(
         &self, zone: &LocationZoneCode, system: &ActorSystem,
     ) -> Result<(), RegistrarError> {
-        let location_actor = self.location_zone_for(zone, system).await?;
-        location_actor.notify(LocationZoneCommand::Subscribe(zone.clone()))?;
+        let location_ref = zone::location_zone_for(zone, system).await?;
+        location_ref.notify(LocationZoneCommand::Start)?;
         Ok(())
     }
 
@@ -104,13 +107,11 @@ impl RegistrarApi for FullRegistrarServices {
         }
 
         let zone_ids = zones.iter().copied().cloned().collect();
-        let saga_id = crate::model::update::generate_id();
-        let update_saga = UpdateLocations::new(self.update_services.clone())
-            .into_actor(Some(saga_id.clone()), ctx.system())
-            .await?;
+        let (saga_id, update_saga) = update::update_locations_saga(ctx.system()).await?;
         debug!("DMR: Update Locations saga identifier: {saga_id:?}");
         // let metadata = maplit::hashmap! { "correlation".to_string() => saga_id.id.to_string(), };
         update_saga.notify(UpdateLocationsCommand::UpdateLocations(zone_ids))?;
+
         Ok(Some(saga_id))
     }
 }

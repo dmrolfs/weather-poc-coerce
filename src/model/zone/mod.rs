@@ -2,7 +2,7 @@ mod actor;
 mod queries;
 mod state;
 
-pub use actor::{support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate};
+pub use actor::{location_zone_for,support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate};
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
 pub use queries::{
@@ -53,7 +53,7 @@ mod protocol {
     #[derive(Debug, Clone, PartialEq, JsonMessage, Serialize, Deserialize)]
     #[result("CommandResult<(), LocationZoneFailure>")]
     pub enum LocationZoneCommand {
-        Subscribe(LocationZoneCode),
+        Start,
         Observe,
         Forecast,
         NoteObservation(Box<WeatherFrame>),
@@ -65,7 +65,7 @@ mod protocol {
     #[strum(serialize_all = "snake_case")]
     #[result("()")]
     pub enum LocationZoneEvent {
-        Subscribed(LocationZoneCode),
+        Started,
         ObservationAdded(Box<WeatherFrame>),
         ForecastUpdated(ZoneForecast),
         AlertActivated(WeatherAlert),
@@ -77,8 +77,21 @@ mod services {
     use crate::model::{LocationZoneCode, LocationZoneType, WeatherFrame, ZoneForecast};
     use crate::services::noaa::{NoaaWeatherError, NoaaWeatherServices, ZoneWeatherApi};
     use std::sync::Arc;
+    use once_cell::sync::OnceCell;
 
     pub type LocationServicesRef = Arc<LocationServices>;
+
+    static SERVICES: OnceCell<LocationServicesRef> = OnceCell::new();
+
+    /// Initializes the `LocationServices` used by LocationZone actors. This may be initialized
+    /// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent calls.
+    pub fn initialize_services(services: LocationServicesRef) -> Result<(), LocationServicesRef> {
+        SERVICES.set(services)
+    }
+
+    pub fn services() -> LocationServicesRef {
+        SERVICES.get().expect("LocationServices are not initialized").clone()
+    }
 
     #[derive(Debug, Clone)]
     pub struct LocationServices(NoaaWeatherServices);
@@ -135,25 +148,4 @@ mod errors {
             zone_error.into()
         }
     }
-
-    // #[derive(Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-    // pub enum LocationZoneFailure {
-    //     Noaa,
-    //     Server,
-    // }
-
-    // impl From<LocationZoneError> for LocationZoneFailure {
-    //     fn from(error: LocationZoneError) -> Self {
-    //         match error {
-    //             LocationZoneError::Noaa(_) => Self::Noaa,
-    //             LocationZoneError::ActorRef(_) => Self::Server,
-    //         }
-    //     }
-    // }
-
-    // impl From<coerce::persistent::PersistErr> for LocationZoneFailure {
-    //     fn from(_error: coerce::persistent::PersistErr) -> Self {
-    //         LocationZoneFailure::Server
-    //     }
-    // }
 }
