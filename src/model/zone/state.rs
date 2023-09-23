@@ -1,5 +1,5 @@
 use super::{LocationZoneCommand, LocationZoneError, LocationZoneEvent};
-use crate::model::{LocationZoneCode, WeatherFrame, ZoneForecast};
+use crate::model::{WeatherFrame, ZoneForecast};
 use coerce_cqrs::{AggregateState, CommandResult};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

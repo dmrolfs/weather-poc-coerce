@@ -1,6 +1,8 @@
-use crate::model::registrar::{MonitoredZonesProjection, RegistrarAggregateSupport, RegistrarServices};
-use crate::model::update::{UpdateLocationsAggregateSupport, UpdateLocationServices, UpdateLocationsHistoryProjection};
-use crate::model::zone::{LocationServices, LocationZoneAggregateSupport, WeatherProjection};
+use crate::model::registrar::{
+    MonitoredZonesProjection, RegistrarAggregateSupport, RegistrarServices,
+};
+use crate::model::update::{UpdateLocationsAggregateSupport, UpdateLocationsHistoryProjection};
+use crate::model::zone::{LocationZoneAggregateSupport, WeatherProjection};
 use crate::model::{LocationZone, Registrar, UpdateLocations};
 use crate::server::api_errors::ApiBootstrapError;
 use crate::services::noaa::{NoaaWeatherApi, NoaaWeatherServices};
@@ -13,7 +15,6 @@ use coerce_cqrs::projection::processor::{ProcessorSourceProvider, ProcessorSourc
 use sqlx::PgPool;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::Arc;
 use url::Url;
 
 #[derive(Clone)]
@@ -90,34 +91,35 @@ impl AppState {
     pub async fn new(
         settings: &Settings, system: ActorSystem, db_pool: PgPool,
     ) -> Result<AppState, ApiBootstrapError> {
-        let user_agent = axum::http::HeaderValue::from_str("(here.com, contact@example.com)")?;
-        // .expect("invalid user_agent");
-        let base_url = Url::from_str("https://api.weather.gov")?;
-        let noaa_api = NoaaWeatherApi::new(base_url, user_agent)?;
-        let noaa = NoaaWeatherServices::Noaa(noaa_api);
-
         let journal_storage_config =
             settings::storage_config_from(&settings.database, &settings.zone);
         let journal_storage =
             do_initialize_journal_storage(journal_storage_config, &system).await?;
 
-        let location_services = Arc::new(LocationServices::new(noaa.clone()));
-        let update_services = Arc::new(UpdateLocationServices::new(noaa, location_subscription_actor_id, system.clone()));
-        let registrar_services = Arc::new(RegistrarServices::full(location_services.clone(), update_services.clone()));
+        // -- registrar
+        let registrar_support = Registrar::initialize_aggregate_support(
+            journal_storage.clone(),
+            RegistrarServices::full(),
+            settings,
+            &system,
+        )
+        .await?;
 
-        let registrar_support =
-            Registrar::initialize_aggregate_support(
-                journal_storage.clone(),
-                registrar_services,
-                settings,
-                &system
-            )
-                .await?;
+        // -- location zone
+        let user_agent = axum::http::HeaderValue::from_str("(here.com, contact@example.com)")?;
+        let base_url = Url::from_str("https://api.weather.gov")?;
+        let noaa_api = NoaaWeatherApi::new(base_url, user_agent)?;
+        let noaa = NoaaWeatherServices::Noaa(noaa_api);
 
-        let location_zone_support =
-            LocationZone::initialize_aggregate_support(journal_storage.clone(), settings, &system)
-                .await?;
+        let location_zone_support = LocationZone::initialize_aggregate_support(
+            journal_storage.clone(),
+            noaa,
+            settings,
+            &system,
+        )
+        .await?;
 
+        // -- update locations
         let update_locations_support = UpdateLocations::initialize_aggregate_support(
             journal_storage.clone(),
             journal_storage.clone(),

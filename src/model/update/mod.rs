@@ -8,8 +8,8 @@ mod view;
 pub use errors::UpdateLocationsError;
 pub use protocol::{UpdateLocationsCommand, UpdateLocationsEvent};
 pub use saga::{
-    support::UpdateLocationsAggregateSupport, UpdateLocations, UpdateLocationsId,
-    UpdateLocationsSaga, update_locations_saga
+    support::UpdateLocationsAggregateSupport, update_locations_saga, UpdateLocations,
+    UpdateLocationsId, UpdateLocationsSaga,
 };
 pub use services::{UpdateLocationServices, UpdateLocationServicesRef};
 pub use state::{

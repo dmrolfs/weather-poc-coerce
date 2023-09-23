@@ -1,11 +1,11 @@
 use super::state::LocationZoneState;
 use super::{LocationServicesRef, LocationZoneCommand, LocationZoneEvent};
 use crate::model::zone::{
-    LocationZoneAggregateSupport, LocationZoneError, WeatherView, ZONE_OFFSET_TABLE,
-    ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW, services::services
+    services::services, LocationServices, LocationZoneAggregateSupport, LocationZoneError,
+    WeatherView, ZONE_OFFSET_TABLE, ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
 };
 use crate::model::{LocationZoneCode, LocationZoneType};
-use crate::services::noaa::ZoneWeatherApi;
+use crate::services::noaa::{NoaaWeatherServices, ZoneWeatherApi};
 use crate::{settings, Settings};
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
@@ -23,11 +23,15 @@ use tracing::Instrument;
 pub type LocationZoneId = LocationZoneCode;
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
-pub async fn location_zone_for(zone: &LocationZoneCode, system: &ActorSystem) -> Result<LocationZoneAggregate, LocationZoneError> {
+pub async fn location_zone_for(
+    zone: &LocationZoneCode, system: &ActorSystem,
+) -> Result<LocationZoneAggregate, LocationZoneError> {
     use coerce::actor::IntoActor;
 
     let aggregate_id = zone.to_string();
-    let aggregate = LocationZone::new(services()).into_actor(Some(aggregate_id), system).await?;
+    let aggregate = LocationZone::new(services())
+        .into_actor(Some(aggregate_id), system)
+        .await?;
     Ok(aggregate)
 }
 
@@ -54,8 +58,14 @@ impl PartialEq for LocationZone {
 // unique aggregate support + fn initialize_aggregate(...) ..
 impl LocationZone {
     pub async fn initialize_aggregate_support(
-        journal_storage: ProcessorSourceRef, settings: &Settings, system: &ActorSystem,
+        journal_storage: ProcessorSourceRef, noaa: NoaaWeatherServices, settings: &Settings,
+        system: &ActorSystem,
     ) -> Result<LocationZoneAggregateSupport, LocationZoneError> {
+        let location_services = Arc::new(LocationServices::new(noaa));
+        if let Err(svc) = crate::model::zone::initialize_services(location_services.clone()) {
+            warn!(extra_service=?svc, "attempt to reinitialize LocationService - ignored");
+        }
+
         let storage_config = settings::storage_config_from(&settings.database, &settings.zone);
         let weather_view_storage = PostgresProjectionStorage::<WeatherView>::new(
             ZONE_WEATHER_VIEW,

@@ -2,16 +2,18 @@ mod actor;
 mod services;
 mod view;
 
-pub use actor::{singleton_id, support::RegistrarAggregateSupport, Registrar, RegistrarAggregate};
+pub use actor::{
+    registrar_actor, singleton_id, support::RegistrarAggregateSupport, Registrar,
+    RegistrarAggregate,
+};
 pub use errors::{RegistrarError, RegistrarFailure};
-pub use view::{MonitoredZonesProjection, MonitoredZonesView, MONITORED_ZONES_VIEW};
 pub use services::{RegistrarServices, RegistrarServicesRef};
+pub use view::{MonitoredZonesProjection, MonitoredZonesView, MONITORED_ZONES_VIEW};
 
 use crate::model::registrar::protocol::{RegistrarAdminCommand as AC, UpdateWeather};
 use crate::model::update::UpdateLocationsId;
 use crate::model::LocationZoneCode;
 use coerce::actor::system::ActorSystem;
-use coerce::actor::IntoActorId;
 use coerce_cqrs::CommandResult;
 
 #[instrument(level = "trace", skip(system))]
@@ -38,14 +40,6 @@ pub async fn forget_forecast_zone(
     zone: LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), RegistrarFailure> {
     result_from(registrar_actor(system).await?.send(AC::ForgetForecastZone(zone)).await?)
-}
-
-#[inline]
-async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate, RegistrarError> {
-    let id = singleton_id().into_actor_id();
-    system.get_tracked_actor(id.clone()).await.ok_or(RegistrarError::ActorRef(
-        coerce::actor::ActorRefErr::NotFound(id),
-    ))
 }
 
 fn result_from<T, E>(command_result: CommandResult<T, E>) -> Result<T, RegistrarFailure>

@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use crate::model::registrar::errors::RegistrarError;
-use crate::model::update::{UpdateLocationServicesRef, UpdateLocationsCommand, UpdateLocationsId};
-use crate::model::zone::{LocationServicesRef, LocationZoneAggregate, LocationZoneCommand};
-use crate::model::{LocationZone, LocationZoneCode, update, UpdateLocations, zone};
+use crate::model::update::{UpdateLocationsCommand, UpdateLocationsId};
+use crate::model::zone::LocationZoneCommand;
+use crate::model::{update, zone, LocationZoneCode};
 use coerce::actor::context::ActorContext;
 use coerce::actor::system::ActorSystem;
-use coerce::actor::IntoActor;
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
 
 #[async_trait]
 pub trait RegistrarApi: Sync + Send {
@@ -28,13 +28,8 @@ pub enum RegistrarServices {
 
 impl RegistrarServices {
     #[allow(dead_code)]
-    pub const fn full(
-        location_services: LocationServicesRef, update_services: UpdateLocationServicesRef,
-    ) -> Self {
-        Self::Full(FullRegistrarServices::new(
-            location_services,
-            update_services,
-        ))
+    pub const fn full() -> Self {
+        Self::Full(FullRegistrarServices)
     }
 
     #[allow(dead_code)]
@@ -64,29 +59,20 @@ impl RegistrarApi for RegistrarServices {
     }
 }
 
+static SERVICES: OnceCell<RegistrarServicesRef> = OnceCell::new();
+
+/// Initializes the `RegistrarServices` used by the Registrar actor. This may be initialized
+/// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent calls.
+pub fn initialize_services(services: RegistrarServicesRef) -> Result<(), RegistrarServicesRef> {
+    SERVICES.set(services)
+}
+
+pub fn services() -> RegistrarServicesRef {
+    SERVICES.get().expect("RegistrarServices are not initialized").clone()
+}
+
 #[derive(Debug, Clone)]
-pub struct FullRegistrarServices {
-    // location_services: LocationServicesRef,
-    update_services: UpdateLocationServicesRef,
-}
-
-impl FullRegistrarServices {
-    pub const fn new(
-        location_services: LocationServicesRef, update_services: UpdateLocationServicesRef,
-    ) -> Self {
-        Self { update_services }
-    }
-
-    // pub async fn location_zone_for(
-    //     &self, zone: &LocationZoneCode, system: &ActorSystem,
-    // ) -> Result<LocationZoneAggregate, RegistrarError> {
-    //     let aggregate_id = zone.to_string();
-    //     let aggregate = LocationZone::new(self.location_services.clone())
-    //         .into_actor(Some(aggregate_id), system)
-    //         .await?;
-    //     Ok(aggregate)
-    // }
-}
+pub struct FullRegistrarServices;
 
 #[async_trait]
 impl RegistrarApi for FullRegistrarServices {

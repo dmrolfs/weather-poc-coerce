@@ -1,6 +1,9 @@
 use super::state::UpdateLocationsState;
 use super::{UpdateLocationsCommand, UpdateLocationsEvent};
-use crate::model::update::{UpdateLocationServices, UpdateLocationServicesRef, UpdateLocationsAggregateSupport, UpdateLocationsError, services};
+use crate::model::update::{
+    services, UpdateLocationServices, UpdateLocationServicesRef, UpdateLocationsAggregateSupport,
+    UpdateLocationsError,
+};
 use crate::model::LocationZoneCode;
 use crate::services::noaa::{NoaaWeatherApi, NoaaWeatherServices};
 use crate::Settings;
@@ -22,7 +25,9 @@ use url::Url;
 pub type UpdateLocationsSaga = LocalActorRef<UpdateLocations>;
 pub type UpdateLocationsId = CuidId<UpdateLocations>;
 
-pub async fn update_locations_saga(system: &ActorSystem) -> Result<(UpdateLocationsId, UpdateLocationsSaga), UpdateLocationsError> {
+pub async fn update_locations_saga(
+    system: &ActorSystem,
+) -> Result<(UpdateLocationsId, UpdateLocationsSaga), UpdateLocationsError> {
     let saga_id = super::generate_id();
     let services = services::services();
     let saga = UpdateLocations::new(services)
@@ -69,17 +74,21 @@ impl UpdateLocations {
         let base_url = Url::from_str("https://api.weather.gov")?;
         let noaa_api = NoaaWeatherApi::new(base_url, user_agent)?;
         let noaa = NoaaWeatherServices::Noaa(noaa_api);
-        let services = Arc::new(UpdateLocationServices::new(
+        let mut update_services = Arc::new(UpdateLocationServices::new(
             noaa,
             location_subscription_channel_id,
             system.clone(),
         ));
+        if let Err(svc) = services::initialize_services(update_services.clone()) {
+            warn!(extra_service=?svc, "attempt to reinitialize UpdateLocationServices - ignored");
+            update_services = services::services();
+        }
 
         // controller
         let controller_processor = support::start_controller_processor(
             journal_processor_source,
             settings,
-            services.clone(),
+            update_services,
             system,
         )
         .await?;

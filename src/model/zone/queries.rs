@@ -1,5 +1,5 @@
 use crate::model::zone::LocationZoneEvent;
-use crate::model::{ForecastDetail, LocationZoneCode, WeatherAlert, WeatherFrame};
+use crate::model::{ForecastDetail, WeatherAlert, WeatherFrame};
 use coerce_cqrs::postgres::{PostgresProjectionStorage, PostgresStorageConfig, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::{PersistenceId, ProjectionError};

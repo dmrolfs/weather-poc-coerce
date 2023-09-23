@@ -3,7 +3,8 @@ use super::protocol::{RegistrarAdminCommand, RegistrarEvent, UpdateWeather};
 use super::services::{RegistrarApi, RegistrarServices};
 use crate::model::registrar::view::{MONITORED_ZONES_TABLE, REGISTRAR_OFFSET_TABLE};
 use crate::model::registrar::{
-    MonitoredZonesView, RegistrarAggregateSupport, MONITORED_ZONES_VIEW,
+    services, MonitoredZonesView, RegistrarAggregateSupport, RegistrarServicesRef,
+    MONITORED_ZONES_VIEW,
 };
 use crate::model::LocationZoneCode;
 use crate::{settings, Settings};
@@ -21,9 +22,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tagid::{Entity, Id, IdGenerator, Label};
 use tracing::Instrument;
-use crate::model::registrar::services::RegistrarServicesRef;
-use crate::model::update::UpdateLocationServicesRef;
-use crate::model::zone::LocationServicesRef;
 
 pub type RegistrarAggregate = coerce::actor::LocalActorRef<Registrar>;
 
@@ -36,18 +34,34 @@ pub fn singleton_id() -> &'static RegistrarId {
     SINGLETON_ID.get_or_init(Registrar::next_id)
 }
 
-static SERVICES: OnceCell<RegistrarServices> = OnceCell::new();
+#[inline]
+pub async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate, RegistrarError> {
+    use coerce::actor::{IntoActor, IntoActorId};
 
-#[derive(Debug, Default, Clone, Label, Serialize, Deserialize)]
+    let id = singleton_id().clone().into_actor_id();
+    match system.get_tracked_actor(id).await {
+        Some(actor_ref) => Ok(actor_ref),
+        None => {
+            let id = singleton_id().into_actor_id();
+            let registrar = Registrar {
+                location_codes: HashSet::default(),
+                services: services::services(),
+            };
+            let aggregate = registrar.into_actor(Some(id), system).await?;
+            Ok(aggregate)
+        },
+    }
+}
+
+#[derive(Debug, Clone, Label)]
 pub struct Registrar {
     location_codes: HashSet<LocationZoneCode>,
+    services: RegistrarServicesRef,
 }
 
 impl Registrar {
     pub async fn initialize_aggregate_support(
-        journal_storage: ProcessorSourceRef,
-        services: RegistrarServicesRef,
-        settings: &Settings,
+        journal_storage: ProcessorSourceRef, services: RegistrarServices, settings: &Settings,
         system: &ActorSystem,
     ) -> Result<RegistrarAggregateSupport, RegistrarError> {
         let storage_config = settings::storage_config_from(&settings.database, &settings.registrar);
@@ -66,18 +80,16 @@ impl Registrar {
             system,
         )?;
 
-        Ok(RegistrarAggregateSupport { monitored_zones_processor, monitored_zones_projection, services, })
-    }
+        let services = Arc::new(services);
+        if let Err(svc) = super::services::initialize_services(services.clone()) {
+            warn!(extra_service=?svc, "attempt to reinitialize RegistrarServices - ignored");
+        }
 
-    /// Initializes the `RegistrarServices` used by the Registrar actor. This may be initialized
-    /// once, and will return the supplied value in an Err (i.e., `Err(services)`) on subsequent
-    /// calls.
-    pub fn initialize_services(services: RegistrarServices) -> Result<(), RegistrarServices> {
-        SERVICES.set(services)
-    }
-
-    fn services() -> &'static RegistrarServices {
-        SERVICES.get().expect("RegistrationServices are not initialized")
+        Ok(RegistrarAggregateSupport {
+            monitored_zones_processor,
+            monitored_zones_projection,
+            services,
+        })
     }
 }
 
@@ -155,11 +167,12 @@ impl AggregateState<RegistrarAdminCommand, RegistrarEvent> for Registrar {
         if let RegistrarAdminCommand::MonitorForecastZone(zone) = command {
             if !self.location_codes.contains(zone) {
                 let zone = zone.clone();
+                let services = self.services.clone();
+
                 tokio::spawn(
                     async move {
-                        if let Err(error) =
-                            Self::services().initialize_forecast_zone(&zone, &system).await
-                        {
+                        let outcome = services.initialize_forecast_zone(&zone, &system).await;
+                        if let Err(error) = outcome {
                             error!(?error, "failed to initialize forecast zone: {zone:?}");
                         }
                     }
@@ -177,7 +190,7 @@ impl Handler<UpdateWeather> for Registrar {
         &mut self, _: UpdateWeather, ctx: &mut ActorContext,
     ) -> <UpdateWeather as Message>::Result {
         let zones: Vec<_> = self.location_codes.iter().collect();
-        match Self::services().update_weather(&zones, ctx).await {
+        match self.services.update_weather(&zones, ctx).await {
             Ok(saga_id) => CommandResult::Ok(saga_id),
             Err(error) => {
                 error!(
@@ -234,6 +247,7 @@ impl Recover<RegistrarEvent> for Registrar {
 }
 
 pub mod support {
+    use crate::model::registrar::services::RegistrarServicesRef;
     use crate::model::registrar::{
         MonitoredZonesProjection, MonitoredZonesView, Registrar, MONITORED_ZONES_VIEW,
     };
@@ -247,7 +261,6 @@ pub mod support {
     use once_cell::sync::OnceCell;
     use std::sync::Arc;
     use std::time::Duration;
-    use crate::model::registrar::services::RegistrarServicesRef;
 
     #[derive(Debug, Clone)]
     pub struct RegistrarAggregateSupport {

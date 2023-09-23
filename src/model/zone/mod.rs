@@ -2,13 +2,15 @@ mod actor;
 mod queries;
 mod state;
 
-pub use actor::{location_zone_for,support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate};
+pub use actor::{
+    location_zone_for, support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate,
+};
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
 pub use queries::{
     WeatherProjection, WeatherView, ZONE_OFFSET_TABLE, ZONE_WEATHER_TABLE, ZONE_WEATHER_VIEW,
 };
-pub use services::{LocationServices, LocationServicesRef};
+pub use services::{initialize_services, LocationServices, LocationServicesRef};
 
 use crate::model::{LocationZoneCode, WeatherAlert};
 use coerce::actor::system::ActorSystem;
@@ -46,7 +48,7 @@ pub async fn notify_update_alert(
 
 mod protocol {
     use super::errors::LocationZoneFailure;
-    use crate::model::{LocationZoneCode, WeatherAlert, WeatherFrame, ZoneForecast};
+    use crate::model::{WeatherAlert, WeatherFrame, ZoneForecast};
     use coerce_cqrs::CommandResult;
     use strum_macros::Display;
 
@@ -76,8 +78,8 @@ mod protocol {
 mod services {
     use crate::model::{LocationZoneCode, LocationZoneType, WeatherFrame, ZoneForecast};
     use crate::services::noaa::{NoaaWeatherError, NoaaWeatherServices, ZoneWeatherApi};
-    use std::sync::Arc;
     use once_cell::sync::OnceCell;
+    use std::sync::Arc;
 
     pub type LocationServicesRef = Arc<LocationServices>;
 
