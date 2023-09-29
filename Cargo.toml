@@ -21,7 +21,7 @@ approx = "0.5.1"
 async-trait = "0.1.73"
 axum = { version = "0.6.20", default-features = true, features = ["macros", ] }
 chrono = "0.4.31"
-clap = { version = "4.4.4", default-features = true, features = ["derive",] }
+clap = { version = "4.4.6", default-features = true, features = ["derive",] }
 config = "0.13.3"
 cuid2 = "0.1.2"
 either = "1.9.0"
@@ -52,7 +52,7 @@ strum = "0.25.0"
 strum_macros = "0.25.2"
 settings_loader = { git = "https://github.com/dmrolfs/settings-loader-rs", features = ["database", "http", ] }
 tagid = { git = "https://github.com/dmrolfs/tagid-rs", features = ["envelope",] }
-thiserror = "1.0.48"
+thiserror = "1.0.49"
 tokio = { version = "1.32.0", features = ["full"] }
 tokio-stream = "0.1.14"
 tokio-util = { version = "0.7.9", features = ["full",] }
@@ -71,7 +71,7 @@ validator = { version = "0.16.1", features = ["derive"] }
 valuable = { version = "0.1.0", features = ["derive"] }
 
 [dependencies.sqlx]
-version = "0.7.1"
+version = "0.7.2"
 default-features = false
 features = [
     "postgres",
@@ -85,12 +85,13 @@ features = [
 ]
 
 [dev-dependencies]
+coerce-cqrs-test = { git = "https://github.com/dmrolfs/coerce-cqrs-rs" }
 claim = { git = "https://github.com/dmrolfs/rust-claim", branch = "bump-autocfg-version" }
 fake = { version = "2.8.0", features = ["chrono"] }
 pretty_assertions = "1.4.0"
 proptest = "1.2.0"
 serde_test = "1.0.176"
-temp-env = "0.3.5"
+temp-env = "0.3.6"
 tokio-test = "0.4.3"
 wiremock = "0.5.19"
 

@@ -28,9 +28,13 @@ mod loading {
             require_ssl: true,
             min_connections: None,
             max_connections: Some(10),
+            acquire_timeout: Some(Duration::from_secs(120)),
             idle_timeout: Some(Duration::from_secs(300)),
             max_lifetime: Some(Duration::from_secs(1_800)),
         },
+        registrar: AggregateSettings::default(),
+        zone: AggregateSettings::default(),
+        update_locations: AggregateSettings::default(),
         // correlation: CorrelationSettings::default(),
     });
 
@@ -52,9 +56,11 @@ mod loading {
             |  database_name: my_database
             |  require_ssl: true
             |  max_connections: 10
+            |  acquire_timeout_secs: 120
             |  idle_timeout_secs: 300
-            |machine_id: 1
-            |node_id: 1
+            |registrar: {}
+            |zone: {}
+            |update_locations: {}
             |"##
         .trim_margin()
         .unwrap();
@@ -77,9 +83,13 @@ mod loading {
                 require_ssl: true,
                 min_connections: None,
                 max_connections: Some(10),
+                acquire_timeout: Some(Duration::from_secs(120)),
                 idle_timeout: Some(Duration::from_secs(300)),
                 max_lifetime: None,
             },
+            registrar: AggregateSettings::default(),
+            zone: AggregateSettings::default(),
+            update_locations: AggregateSettings::default(),
             // correlation: CorrelationSettings { machine_id: 1, node_id: 1 },
         };
 

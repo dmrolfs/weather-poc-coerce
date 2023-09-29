@@ -10,6 +10,8 @@ http_api:
     per_seconds: 0.5
 
 database:
+  username: "settings_user"
+  password: "my_pass"
   host: localhost
   port: 5432
   database_name: weather

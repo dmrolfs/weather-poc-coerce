@@ -15,13 +15,17 @@ use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistentActor, Recover};
 use coerce_cqrs::postgres::PostgresProjectionStorage;
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
-use coerce_cqrs::{AggregateState, CommandResult};
+use coerce_cqrs::{Aggregate, AggregateState, CommandResult};
 use once_cell::sync::OnceCell;
 use smol_str::SmolStr;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tagid::{Entity, Id, IdGenerator, Label};
 use tracing::Instrument;
+
+#[cfg(test)]
+use coerce_cqrs_test::fixtures::aggregate::{Summarizable, Summarize};
 
 pub type RegistrarAggregate = coerce::actor::LocalActorRef<Registrar>;
 
@@ -34,20 +38,27 @@ pub fn singleton_id() -> &'static RegistrarId {
     SINGLETON_ID.get_or_init(Registrar::next_id)
 }
 
-#[inline]
+#[instrument(level = "debug", skip(system))]
 pub async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate, RegistrarError> {
     use coerce::actor::{IntoActor, IntoActorId};
 
     let id = singleton_id().clone().into_actor_id();
-    match system.get_tracked_actor(id).await {
-        Some(actor_ref) => Ok(actor_ref),
+    match system.get_tracked_actor(id.clone()).await {
+        Some(actor_ref) => {
+            debug!("Found Registrar[{id}]: {actor_ref:?}");
+            Ok(actor_ref)
+        },
         None => {
+            let create = debug_span!("Registrar not found - creating", %id);
+            let _create_guard = create.enter();
+
             let id = singleton_id().into_actor_id();
             let registrar = Registrar {
                 location_codes: HashSet::default(),
                 services: services::services(),
             };
-            let aggregate = registrar.into_actor(Some(id), system).await?;
+            let aggregate = registrar.into_actor(Some(id.clone()), system).await?;
+            info!("Started Registrar[{id}]: {aggregate:?}");
             Ok(aggregate)
         },
     }
@@ -77,6 +88,7 @@ impl Registrar {
         let monitored_zones_processor = support::monitored_zones_processor(
             journal_storage,
             monitored_zones_projection.clone(),
+            Duration::from_secs(60),
             system,
         )?;
 
@@ -90,6 +102,31 @@ impl Registrar {
             monitored_zones_projection,
             services,
         })
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrarSummary {
+    pub location_codes: HashSet<LocationZoneCode>,
+}
+
+#[cfg(test)]
+impl Summarizable for Registrar {
+    type Summary = RegistrarSummary;
+
+    fn summarize(&self, _ctx: &ActorContext) -> Self::Summary {
+        RegistrarSummary { location_codes: self.location_codes.clone() }
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Handler<Summarize<Self>> for Registrar {
+    async fn handle(
+        &mut self, _: Summarize<Self>, ctx: &mut ActorContext,
+    ) -> <Summarize<Self> as Message>::Result {
+        self.summarize(ctx)
     }
 }
 
@@ -109,11 +146,14 @@ impl Entity for Registrar {
     type IdGen = SingletonIdGenerator;
 }
 
+impl Aggregate for Registrar {}
+
 #[async_trait]
 impl PersistentActor for Registrar {
     #[instrument(level = "debug", skip(journal))]
     fn configure(journal: &mut JournalTypes<Self>) {
-        journal.message::<RegistrarEvent>("registrar-event");
+        journal
+            .message::<RegistrarEvent>(&Self::journal_message_type_identifier::<RegistrarEvent>());
     }
 }
 
@@ -165,20 +205,19 @@ impl AggregateState<RegistrarAdminCommand, RegistrarEvent> for Registrar {
     fn then_run(&self, command: &RegistrarAdminCommand, ctx: &ActorContext) {
         let system = ctx.system().clone();
         if let RegistrarAdminCommand::MonitorForecastZone(zone) = command {
-            if !self.location_codes.contains(zone) {
-                let zone = zone.clone();
-                let services = self.services.clone();
+            // at this point command was processed, zone added, so initialize
+            let zone = zone.clone();
+            let services = self.services.clone();
 
-                tokio::spawn(
-                    async move {
-                        let outcome = services.initialize_forecast_zone(&zone, &system).await;
-                        if let Err(error) = outcome {
-                            error!(?error, "failed to initialize forecast zone: {zone:?}");
-                        }
+            tokio::spawn(
+                async move {
+                    let outcome = services.initialize_forecast_zone(&zone, &system).await;
+                    if let Err(error) = outcome {
+                        error!(?error, "failed to initialize forecast zone: {zone:?}");
                     }
-                    .instrument(debug_span!("registrar command service", ?command)),
-                );
-            }
+                }
+                .instrument(debug_span!("registrar command service", ?command)),
+            );
         }
     }
 }
@@ -272,18 +311,19 @@ pub mod support {
     static MONITORED_ZONES_PROCESSOR: OnceCell<ProcessorEngineRef> = OnceCell::new();
     pub fn monitored_zones_processor(
         journal_storage: ProcessorSourceRef,
-        view_storage: ProjectionStorageRef<PersistenceId, MonitoredZonesView>,
+        view_storage: ProjectionStorageRef<PersistenceId, MonitoredZonesView>, interval: Duration,
         system: &ActorSystem,
     ) -> Result<ProcessorEngineRef, ProjectionError> {
         let processor = MONITORED_ZONES_PROCESSOR.get_or_try_init(|| {
-            let monitored_zones_apply = ProjectionApplicator::new(MonitoredZonesView::apply_event);
+            let monitored_zones_apply =
+                ProjectionApplicator::<Registrar, _, _, _>::new(MonitoredZonesView::apply_event);
 
             Processor::builder_for::<Registrar, _, _, _, _>(MONITORED_ZONES_VIEW)
                 .with_entry_handler(monitored_zones_apply)
                 .with_system(system.clone())
                 .with_source(journal_storage.clone())
                 .with_projection_storage(view_storage.clone())
-                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .with_interval_calculator(RegularInterval::of_duration(interval))
                 .finish()
                 .map_err(|err| err.into())
                 .and_then(|engine| engine.run())
@@ -291,5 +331,39 @@ pub mod support {
         })?;
 
         Ok(processor.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::registrar::services::HappyPathServices;
+    use coerce_cqrs_test::framework::TestFramework;
+    use tokio_test::block_on;
+
+    #[test]
+    fn test_registrar_start() {
+        block_on(async {
+            let registrar = Registrar {
+                location_codes: HashSet::default(),
+                services: Arc::new(RegistrarServices::HappyPath(HappyPathServices)),
+            };
+
+            let validator = TestFramework::<Registrar, _>::for_aggregate(registrar)
+                .with_memory_storage()
+                .given_no_previous_events()
+                .await
+                .when(RegistrarAdminCommand::MonitorForecastZone(
+                    LocationZoneCode::new("WAZ558"),
+                ))
+                .await;
+
+            validator.then_expect_reply(CommandResult::Ok(()));
+            validator.then_expect_state_summary(RegistrarSummary {
+                location_codes: maplit::hashset! {
+                    LocationZoneCode::new("WAZ558"),
+                },
+            });
+        })
     }
 }

@@ -35,6 +35,17 @@ pub struct AggregateSettings {
     pub projection_offsets_table_name: TableName,
 }
 
+impl Default for AggregateSettings {
+    fn default() -> Self {
+        Self {
+            event_journal_table_name: PostgresStorageConfig::default_event_journal_table(),
+            snapshots_table_name: PostgresStorageConfig::default_snapshot_table(),
+            projection_offsets_table_name: PostgresStorageConfig::default_projection_offsets_table(
+            ),
+        }
+    }
+}
+
 pub fn storage_config_from(
     db: &DatabaseSettings, aggregate: &AggregateSettings,
 ) -> PostgresStorageConfig {
