@@ -28,11 +28,13 @@ pub async fn clear_monitoring(system: &ActorSystem) -> Result<(), RegistrarFailu
     result_from(registrar_actor(system).await?.send(AC::ClearZoneMonitoring).await?)
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn monitor_forecast_zone(
     zone: LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), RegistrarFailure> {
-    result_from(registrar_actor(system).await?.send(AC::MonitorForecastZone(zone)).await?)
+    let registrar_ref = registrar_actor(system).await;
+    debug!(?registrar_ref, "DMR: REGISTRAR_ACTOR");
+    result_from(registrar_ref?.send(AC::MonitorForecastZone(zone)).await?)
 }
 
 #[instrument(level = "trace", skip(system))]

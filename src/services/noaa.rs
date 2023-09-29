@@ -112,7 +112,15 @@ impl NoaaWeatherApi {
 
         let status_code = response.status();
         let body = response.text().await?;
-        debug!(%body, ?status_code, %url, "{label} response body");
+
+        use std::io::Write;
+        let now = iso8601_timestamp::Timestamp::now_utc()
+            .duration_since(iso8601_timestamp::Timestamp::UNIX_EPOCH)
+            .whole_seconds();
+        let filename = format!("geojson-{label}-{}.json", now);
+        let mut output = std::fs::File::create(&filename).unwrap();
+        write!(output, "{}", body).unwrap();
+        warn!(?status_code, %url, "saved {label} geo response body to: {filename}");
 
         let geojson = body.parse()?;
         Ok(geojson)
@@ -263,7 +271,7 @@ impl AlertApi for HappyPathWeatherServices {
                 certainty: model::AlertCertainty::Possible,
                 urgency: model::AlertUrgency::Immediate,
                 event: "High Wind Watch".to_string(),
-                headline: "High Wind Watch issued".to_string(),
+                headline: Some("High Wind Watch issued".to_string()),
                 description: r##"* WHAT...South winds 30 to 40 mph with gusts up to 50 mph possible.
                     |* WHERE...Portions of southeast Louisiana and southeast and southern Mississippi.
                     |* WHEN...From Tuesday afternoon through late Tuesday night.

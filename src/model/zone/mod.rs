@@ -4,6 +4,7 @@ mod state;
 
 pub use actor::{
     location_zone_for, support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate,
+    LocationZoneId,
 };
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
@@ -16,7 +17,7 @@ use crate::model::{LocationZoneCode, WeatherAlert};
 use coerce::actor::system::ActorSystem;
 use coerce::actor::IntoActorId;
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn notify_observe(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
@@ -26,7 +27,7 @@ pub async fn notify_observe(
     Ok(())
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn notify_forecast(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
@@ -36,7 +37,7 @@ pub async fn notify_forecast(
     Ok(())
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn notify_update_alert(
     zone: &LocationZoneCode, alert: Option<WeatherAlert>, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {

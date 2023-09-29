@@ -15,12 +15,21 @@ use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistErr, PersistentActor, Recover, RecoverSnapshot};
 use coerce_cqrs::postgres::PostgresProjectionStorage;
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
-use coerce_cqrs::{AggregateState, CommandResult, SnapshotTrigger};
+use coerce_cqrs::{Aggregate, AggregateState, CommandResult, SnapshotTrigger};
 use std::sync::Arc;
-use tagid::{Entity, Label};
+use std::time::Duration;
+use tagid::{Entity, Id, Label};
 use tracing::Instrument;
 
-pub type LocationZoneId = LocationZoneCode;
+pub type LocationZoneId = Id<LocationZone, LocationZoneCode>;
+
+impl From<LocationZoneCode> for LocationZoneId {
+    fn from(zone: LocationZoneCode) -> Self {
+        Self::for_labeled(zone)
+    }
+}
+
+
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
 pub async fn location_zone_for(
@@ -28,8 +37,9 @@ pub async fn location_zone_for(
 ) -> Result<LocationZoneAggregate, LocationZoneError> {
     use coerce::actor::IntoActor;
 
-    let aggregate_id = zone.to_string();
+    let aggregate_id: LocationZoneId = Id::for_labeled(zone.clone());
     let aggregate = LocationZone::new(services())
+        .with_snapshots(5)
         .into_actor(Some(aggregate_id), system)
         .await?;
     Ok(aggregate)
@@ -47,12 +57,6 @@ impl PartialEq for LocationZone {
         self.state == other.state
     }
 }
-
-// impl Default for LocationZone {
-//     fn default() -> Self {
-//         Self::new(Self::services())
-//     }
-// }
 
 //todo: make this into an `AggregateSupport` trait to be written via derive macro
 // unique aggregate support + fn initialize_aggregate(...) ..
@@ -77,8 +81,12 @@ impl LocationZone {
         .await?;
         let weather_projection = Arc::new(weather_view_storage);
 
-        let weather_processor =
-            support::weather_processor(journal_storage, weather_projection.clone(), system)?;
+        let weather_processor = support::weather_processor(
+            journal_storage,
+            weather_projection.clone(),
+            Duration::from_secs(60),
+            system,
+        )?;
 
         Ok(LocationZoneAggregateSupport { weather_processor, weather_projection })
     }
@@ -137,6 +145,7 @@ impl LocationZone {
         }
     }
 
+    #[instrument(level = "debug", skip(ctx))]
     fn do_observe(&self, zone: LocationZoneCode, ctx: &ActorContext) {
         let zone_0 = zone.clone();
         let services = self.services.clone();
@@ -166,6 +175,7 @@ impl LocationZone {
         );
     }
 
+    #[instrument(level = "debug", skip(ctx))]
     fn do_forecast(&self, zone: LocationZoneCode, ctx: &ActorContext) {
         let zone_0 = zone.clone();
         let services = self.services.clone();
@@ -200,13 +210,19 @@ impl Entity for LocationZone {
     type IdGen = inner::LocationIdGenerator;
 }
 
+impl Aggregate for LocationZone {}
+
 #[async_trait]
 impl PersistentActor for LocationZone {
     #[instrument(level = "info", skip(journal))]
     fn configure(journal: &mut JournalTypes<Self>) {
         journal
-            .snapshot::<LocationZoneSnapshot>("location-zone-snapshot")
-            .message::<LocationZoneEvent>("location-zone-event");
+            .snapshot::<LocationZoneSnapshot>(&Self::journal_snapshot_type_identifier::<
+                LocationZoneSnapshot,
+            >())
+            .message::<LocationZoneEvent>(&Self::journal_message_type_identifier::<
+                LocationZoneEvent,
+            >());
     }
 }
 
@@ -317,17 +333,19 @@ pub mod support {
     static WEATHER_PROCESSOR: OnceCell<ProcessorEngineRef> = OnceCell::new();
     pub fn weather_processor(
         journal_storage: ProcessorSourceRef,
-        view_storage: ProjectionStorageRef<PersistenceId, WeatherView>, system: &ActorSystem,
+        view_storage: ProjectionStorageRef<PersistenceId, WeatherView>, interval: Duration,
+        system: &ActorSystem,
     ) -> Result<ProcessorEngineRef, ProjectionError> {
         let processor = WEATHER_PROCESSOR.get_or_try_init(|| {
-            let weather_apply = ProjectionApplicator::new(WeatherView::apply_event);
+            let weather_apply =
+                ProjectionApplicator::<LocationZone, _, _, _>::new(WeatherView::apply_event);
 
             Processor::builder_for::<LocationZone, _, _, _, _>(ZONE_WEATHER_VIEW)
                 .with_entry_handler(weather_apply)
                 .with_system(system.clone())
                 .with_source(journal_storage.clone())
                 .with_projection_storage(view_storage.clone())
-                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .with_interval_calculator(RegularInterval::of_duration(interval))
                 .finish()
                 .map_err(|err| err.into())
                 .and_then(|engine| engine.run())
@@ -348,7 +366,7 @@ mod inner {
         type IdType = LocationZoneId;
 
         fn next_id_rep() -> Self::IdType {
-            LocationZoneId::new("")
+            unimplemented!("use location zone code to create aggregate id")
         }
     }
 }

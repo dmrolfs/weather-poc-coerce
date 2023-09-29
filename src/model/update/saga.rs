@@ -14,7 +14,7 @@ use coerce::actor::{IntoActor, LocalActorRef};
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistentActor, Recover};
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
-use coerce_cqrs::{AggregateState, CommandResult};
+use coerce_cqrs::{Aggregate, AggregateState, CommandResult};
 use std::str::FromStr;
 use std::sync::Arc;
 use tagid::{CuidId, Entity, Id, Label, Labeling};
@@ -126,25 +126,30 @@ impl UpdateLocations {
         let services = self.services.clone();
         let saga_id = ctx.id().clone();
         let id = saga_id.clone();
+        let zones_0 = zones.clone();
         tokio::spawn(
             async move {
-                debug!("DMR: Saga[{id}] starting to update zones: {zones:?}");
+                debug!("DMR: Saga[{id}] subscribing update process to zones events: {zones:?}");
                 let saga_id: UpdateLocationsId =
                     Id::direct(UpdateLocations::labeler().label(), id.to_string());
                 if let Err(error) = services.add_subscriber(saga_id, &zones).await {
                     error!(?error, "failed to register update locations saga, {id}, for location event broadcasts.");
                 }
             }
-            .instrument(debug_span!("add_saga_subscriber", %saga_id)),
+            .instrument(debug_span!("subscribe update saga to zone(s) events", %saga_id, zones=?zones_0)),
         );
     }
 }
+
+impl Aggregate for UpdateLocations {}
 
 #[async_trait]
 impl PersistentActor for UpdateLocations {
     #[instrument(level = "debug", skip(journal))]
     fn configure(journal: &mut JournalTypes<Self>) {
-        journal.message::<UpdateLocationsEvent>("update-locations-event");
+        journal.message::<UpdateLocationsEvent>(&Self::journal_message_type_identifier::<
+            UpdateLocationsEvent,
+        >());
     }
 }
 
@@ -295,15 +300,18 @@ pub mod support {
         )
         .await?;
         let update_history_projection = history_storage.clone();
-        let update_history_apply = ProjectionApplicator::new(UpdateLocationsHistory::apply_event);
+        let update_history_apply = ProjectionApplicator::<UpdateLocations, _, _, _>::new(
+            UpdateLocationsHistory::apply_event,
+        );
 
+        let interval = Duration::from_secs(60);
         let engine: ProcessorEngine<Ready<PersistenceId, UpdateLocationsHistory, _, _>> =
             Processor::builder_for::<UpdateLocations, _, _, _, _>(UPDATE_LOCATIONS_HISTORY_VIEW)
                 .with_entry_handler(update_history_apply)
                 .with_system(system.clone())
                 .with_source(journal_storage.clone())
                 .with_projection_storage(history_storage)
-                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .with_interval_calculator(RegularInterval::of_duration(interval))
                 .finish()?;
 
         let processor = engine.run()?;
@@ -328,13 +336,14 @@ pub mod support {
         .await?;
         let controller_apply = UpdateLocationsController::new(system.clone(), services);
 
+        let interval = Duration::from_secs(10);
         let engine: ProcessorEngine<Ready<PersistenceId, (), _, _>> =
             Processor::builder_for::<UpdateLocations, _, _, _, _>(UPDATE_LOCATIONS_CONTROLLER)
                 .with_entry_handler(controller_apply)
                 .with_system(system.clone())
                 .with_source(journal_storage.clone())
                 .with_projection_storage(storage)
-                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .with_interval_calculator(RegularInterval::of_duration(interval))
                 .finish()?;
 
         let controller = engine.run()?;
@@ -359,13 +368,14 @@ pub mod support {
             EventSubscriptionProcessor::new(LocationZoneBroadcastTopic, system).await?;
         let subscription_channel_actor_id = subscription_processor.channel_actor_id();
 
+        let interval = Duration::from_secs(60);
         let engine: ProcessorEngine<Ready<PersistenceId, (), _, _>> =
             Processor::builder_for::<LocationZone, _, _, _, _>(UPDATE_LOCATION_ZONE_SUBSCRIPTION)
                 .with_entry_handler(subscription_processor)
                 .with_system(system.clone())
                 .with_source(location_zone_storage)
                 .with_projection_storage(projection_storage)
-                .with_interval_calculator(RegularInterval::of_duration(Duration::from_millis(250)))
+                .with_interval_calculator(RegularInterval::of_duration(interval))
                 .finish()
                 .map_err(ProjectionError::Processor)?;
 

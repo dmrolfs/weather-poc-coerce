@@ -4,6 +4,7 @@ use crate::connect::EventEnvelope;
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
 use coerce::actor::{Actor, ActorId, LocalActorRef};
+use coerce_cqrs::Aggregate;
 use inner::{MultiIndexSubscriptionMap, Subscription};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -32,9 +33,15 @@ mod protocol {
 }
 
 pub trait EventCommandTopic: Label + Send + Sync + 'static {
+    type Source: Aggregate;
     type Subscriber: Actor + Handler<Self::Command>;
     type Event: Message + Debug + Serialize + DeserializeOwned;
     type Command: Message + Debug + Clone;
+
+    fn journal_message_type_indicator() -> &'static str {
+        static INDICATOR: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
+        INDICATOR.get_or_init(Self::Source::journal_message_type_identifier::<Self::Event>)
+    }
 
     fn commands_from_event(
         &self, event_envelope: &EventEnvelope<Self::Event>,

@@ -18,6 +18,9 @@ pub enum WeatherError {
     #[error("failed to parse Json: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("failed ro parse url: {0}")]
+    UrlParse(#[from] url::ParseError),
+
     #[error("cannot extract location zone identifier from URL: {0}")]
     UrlNotZoneIdentifier(url::Url),
 

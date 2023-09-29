@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use std::borrow::Cow;
 
+#[allow(dead_code)]
 pub type HttpResult = Result<Response, ApiError>;
 
 #[derive(Debug)]
@@ -61,14 +62,12 @@ pub enum HttpError {
 
 impl From<anyhow::Error> for HttpError {
     fn from(error: anyhow::Error) -> Self {
-        error!("HTTP handler error: {error}");
+        error!("HTTP handler error: {error:?}");
         match error.downcast_ref::<ApiError>() {
             Some(ApiError::Path(_)) => Self::BadRequest { error: error.into() },
             Some(
                 ApiError::Registrar(_)
-                // | ApiError::ParseUrl(_)
                 | ApiError::Noaa(_)
-                // | ApiError::IO(_)
                 | ApiError::Json(_)
                 | ApiError::HttpEngine(_)
                 | ApiError::Projection(_)

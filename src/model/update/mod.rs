@@ -19,7 +19,7 @@ pub use view::{UpdateLocationsHistory, UpdateLocationsHistoryProjection};
 
 use crate::connect::{EventCommandTopic, EventEnvelope};
 use crate::model::zone::{LocationZoneError, LocationZoneEvent};
-use crate::model::LocationZoneCode;
+use crate::model::{LocationZone, LocationZoneCode};
 use coerce::actor::system::ActorSystem;
 use coerce::actor::ActorId;
 use coerce_cqrs::postgres::{PostgresStorageConfig, TableName};
@@ -59,6 +59,7 @@ pub static UPDATE_LOCATION_ZONE_SUBSCRIPTION_OFFSET_TABLE: Lazy<TableName> =
 pub struct LocationZoneBroadcastTopic;
 
 impl EventCommandTopic for LocationZoneBroadcastTopic {
+    type Source = LocationZone;
     type Subscriber = UpdateLocations;
     type Event = LocationZoneEvent;
     type Command = UpdateLocationsCommand;

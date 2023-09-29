@@ -40,6 +40,7 @@ impl RegistrarServices {
 
 #[async_trait]
 impl RegistrarApi for RegistrarServices {
+    #[instrument(level = "debug", skip(system))]
     async fn initialize_forecast_zone(
         &self, zone: &LocationZoneCode, system: &ActorSystem,
     ) -> Result<(), RegistrarError> {
@@ -49,6 +50,7 @@ impl RegistrarApi for RegistrarServices {
         }
     }
 
+    #[instrument(level = "debug", skip(ctx))]
     async fn update_weather(
         &self, zones: &[&LocationZoneCode], ctx: &ActorContext,
     ) -> Result<Option<UpdateLocationsId>, RegistrarError> {

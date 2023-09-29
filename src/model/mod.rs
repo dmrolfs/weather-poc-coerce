@@ -67,6 +67,16 @@ impl LocationZoneCode {
             })
             .ok_or_else(|| WeatherError::UrlNotZoneIdentifier(url))
     }
+
+    pub fn parse(code_rep: impl Into<String>) -> Result<Self, WeatherError> {
+        let code_rep = code_rep.into();
+        let code = if code_rep.starts_with("http") {
+            Self::from_url(Url::parse(&code_rep)?)?.1
+        } else {
+            Self::new(code_rep)
+        };
+        Ok(code)
+    }
 }
 
 impl From<LocationZoneCode> for String {
@@ -301,7 +311,7 @@ pub struct WeatherAlert {
     /// The text denoting the type of the subject event of the alert message.
     pub event: String,
 
-    pub headline: String,
+    pub headline: Option<String>,
 
     /// An object representing a public alert message. Unless otherwise noted, the fields in this
     /// object correspond to the National Weather Service CAP v1.2 specification, which extends the
@@ -323,27 +333,35 @@ pub struct WeatherAlert {
 impl TryFrom<Feature> for WeatherAlert {
     type Error = WeatherError;
 
+    #[instrument(level = "trace", name = "DMR_WEATHER_ALERT_TRY_FROM_FEATURE", skip(f))]
     fn try_from(f: Feature) -> Result<Self, Self::Error> {
+        debug!(feature=?f, "DMR: trying to parse alert from geo feature");
         let extract = PropertyExtractor::new("weather_alert", &f);
 
+        let affected: Vec<String> = extract.property("affectedZones")?;
+        let mut affected_zones = Vec::with_capacity(affected.len());
+        for zone in affected {
+            affected_zones.push(LocationZoneCode::parse(zone)?);
+        }
+
         Ok(Self {
-            affected_zones: extract.property("affectedZones")?,
+            affected_zones,
             status: extract.property("status")?,
-            message_type: extract.property("status")?,
+            message_type: extract.property("messageType")?,
             sent: extract.property("sent")?,
-            effective: extract.property("status")?,
+            effective: extract.property("effective")?,
             onset: extract.property("onset")?,
-            expires: extract.property("status")?,
+            expires: extract.property("expires")?,
             ends: extract.property("ends")?,
-            category: extract.property("status")?,
-            severity: extract.property("status")?,
-            certainty: extract.property("status")?,
-            urgency: extract.property("status")?,
-            event: extract.property("status")?,
-            headline: extract.property("status")?,
-            description: extract.property("status")?,
-            instruction: extract.property("status")?,
-            response: extract.property("status")?,
+            category: extract.property("category")?,
+            severity: extract.property("severity")?,
+            certainty: extract.property("certainty")?,
+            urgency: extract.property("urgency")?,
+            event: extract.property("event")?,
+            headline: extract.property("headline")?,
+            description: extract.property("description")?,
+            instruction: extract.property("instruction")?,
+            response: extract.property("response")?,
         })
     }
 }
@@ -358,7 +376,11 @@ impl<'a> PropertyExtractor<'a> {
         Self { target, feature }
     }
 
-    fn property<T: DeserializeOwned>(&self, property: &str) -> Result<T, WeatherError> {
+    #[instrument(level = "trace", name = "DMR_EXTRACT_PROPERTY", skip(self))]
+    fn property<T>(&self, property: &str) -> Result<T, WeatherError>
+    where
+        T: DeserializeOwned + fmt::Debug,
+    {
         let p = self.feature.property(property).ok_or_else(|| {
             WeatherError::MissingGeoJsonProperty {
                 target: self.target.to_string(),
@@ -366,7 +388,13 @@ impl<'a> PropertyExtractor<'a> {
             }
         })?;
 
-        Ok(serde_json::from_value(p.clone())?)
+        let result = serde_json::from_value(p.clone());
+        trace!(
+            ?result,
+            "DMR: feature property {p_type} {property}={p:?}",
+            p_type = std::any::type_name::<T>()
+        );
+        result.map_err(|err| err.into())
     }
 }
 

@@ -26,10 +26,10 @@ extern crate coerce_macros;
 extern crate utoipa;
 
 mod connect;
-mod errors;
-mod model;
+pub mod errors;
+pub mod model;
 mod server;
-mod services;
+pub mod services;
 mod settings;
 pub mod setup_tracing;
 

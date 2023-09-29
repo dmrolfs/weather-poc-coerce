@@ -3,7 +3,7 @@ use crate::model::update::{
     UpdateLocationsEvent, UpdateLocationsHistory, UpdateLocationsHistoryProjection,
     UpdateLocationsState,
 };
-use crate::model::zone::WeatherProjection;
+use crate::model::zone::{WeatherProjection, WeatherView};
 use crate::model::{LocationZone, LocationZoneCode, UpdateLocations};
 use crate::server::api_errors::ApiError;
 use crate::server::api_result::OptionalResult;
@@ -226,15 +226,14 @@ async fn remove_forecast_zone(
 async fn serve_location_weather(
     Path(zone_code): Path<LocationZoneCode>, State(view_repo): State<WeatherProjection>,
 ) -> impl IntoResponse {
-    let view_id: PersistenceId =
-        PersistenceId::from_aggregate_id::<LocationZone>(zone_code.as_ref());
-    let view = view_repo
+    let view_id = PersistenceId::from_aggregate_id::<LocationZone>(zone_code.as_ref());
+    let view: Result<Option<WeatherView>, ApiError> = view_repo
         .load_projection(&view_id)
         .await
-        .map_err::<ApiError, _>(|err| err.into())
-        .map(|v| v.map(Json))
-        .map(OptionalResult);
-
+        .map_err(|err| err.into());
     debug!("location {zone_code} weather: {view:?}");
+
     view
+        .map(|ov| ov.map(Json))
+        .map(OptionalResult)
 }

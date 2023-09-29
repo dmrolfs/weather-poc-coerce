@@ -1,13 +1,16 @@
 use crate::model::update::{UpdateLocationServicesRef, UpdateLocationsError, UpdateLocationsEvent};
-use crate::model::zone;
 use crate::model::zone::LocationZoneError;
 use crate::model::{update, LocationZoneCode, WeatherAlert};
+use crate::model::{zone, UpdateLocations};
 use crate::services::noaa::AlertApi;
 use coerce::actor::system::ActorSystem;
 use coerce::actor::{ActorId, IntoActorId};
 use coerce::persistent::storage::JournalEntry;
-use coerce_cqrs::projection::processor::{ProcessEntry, ProcessResult, ProcessorContext};
+use coerce_cqrs::projection::processor::{
+    EntryPayloadTypes, ProcessEntry, ProcessResult, ProcessorContext,
+};
 use coerce_cqrs::projection::ProjectionError;
+use coerce_cqrs::Aggregate;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use tracing::Instrument;
@@ -16,13 +19,18 @@ pub const UPDATE_LOCATIONS_CONTROLLER: &str = "update_locations_controller";
 
 #[derive(Clone)]
 pub struct UpdateLocationsController {
+    known_entry_type: EntryPayloadTypes,
     system: ActorSystem,
     services: UpdateLocationServicesRef,
 }
 
 impl UpdateLocationsController {
     pub fn new(system: ActorSystem, services: UpdateLocationServicesRef) -> Self {
-        Self { system, services }
+        let known_entry_type =
+            EntryPayloadTypes::single(UpdateLocations::journal_message_type_identifier::<
+                UpdateLocationsEvent,
+            >());
+        Self { known_entry_type, system, services }
     }
 }
 
@@ -37,6 +45,10 @@ impl fmt::Debug for UpdateLocationsController {
 
 impl ProcessEntry for UpdateLocationsController {
     type Projection = ();
+
+    fn known_entry_types(&self) -> &EntryPayloadTypes {
+        &self.known_entry_type
+    }
 
     #[instrument(level = "debug", skip(self, _projection, entry, ctx))]
     fn apply_entry_to_projection(
@@ -114,98 +126,6 @@ impl UpdateLocationsController {
             .instrument(debug_span!("update location weather alerts", %saga_id, ?zones)),
         );
     }
-
-    // async fn do_update_zone_alerts(&self, saga_id: ActorId, zones: Vec<LocationZoneCode>) {
-    //     let update_zones: HashSet<_> = zones.into_iter().collect();
-    //     let mut alerted_zones = HashSet::with_capacity(update_zones.len());
-    //
-    //     // -- zones with alerts
-    //     let alerts = self.do_get_alerts().await;
-    //     let nr_alerts = alerts.len();
-    //     let mut zone_update_failures = HashMap::new();
-    //     for alert in alerts {
-    //         let saga_affected_zones: Vec<_> = alert
-    //             .affected_zones
-    //             .clone()
-    //             .into_iter()
-    //             .filter(|z| update_zones.contains(z))
-    //             .collect();
-    //
-    //         let (affected_zones, failures) =
-    //             self.do_alert_affected_zones(alert, saga_affected_zones).await;
-    //         alerted_zones.extend(affected_zones);
-    //         zone_update_failures.extend(failures);
-    //     }
-    //
-    //     // -- unaffected zones
-    //     let unaffected_zones: Vec<_> = update_zones.difference(&alerted_zones).cloned().collect();
-    //     info!(?alerted_zones, ?unaffected_zones, %nr_alerts, "DMR: finishing alerting with unaffected notes...");
-    //     let unaffected_failures = self.do_update_unaffected_zones(unaffected_zones).await;
-    //     zone_update_failures.extend(unaffected_failures);
-    //
-    //     // -- note update failures
-    //     self.do_note_alert_update_failures(saga_id.clone(), zone_update_failures)
-    //         .await;
-    // }
-
-    // #[instrument(level = "trace", skip(self,))]
-    // async fn do_alert_affected_zones(
-    //     &self, alert: WeatherAlert, affected_zones: Vec<LocationZoneCode>,
-    // ) -> (Vec<LocationZoneCode>, ZoneUpdateFailures) {
-    //     let mut alerted_zones = vec![];
-    //     let mut failures = ZoneUpdateFailures::new();
-    //
-    //     for zone in affected_zones {
-    //         alerted_zones.push(zone.clone());
-    //         if let Err(error) =
-    //             zone::notify_update_alert(&zone, Some(alert.clone()), &self.system).await
-    //         {
-    //             failures.insert(zone, error);
-    //         }
-    //     }
-    //
-    //     (alerted_zones, failures)
-    // }
-
-    // #[instrument(level = "trace", skip(self))]
-    // async fn do_update_unaffected_zones(
-    //     &self, unaffected: Vec<LocationZoneCode>,
-    // ) -> ZoneUpdateFailures {
-    //     let mut failures = ZoneUpdateFailures::new();
-    //
-    //     for zone in unaffected {
-    //         if let Err(error) = zone::notify_update_alert(&zone, None, &self.system).await {
-    //             failures.insert(zone, error);
-    //         }
-    //     }
-    //
-    //     failures
-    // }
-
-    // #[instrument(level = "trace", skip(self))]
-    // async fn do_note_alert_update_failures(&self, saga_id: ActorId, failures: ZoneUpdateFailures) {
-    //     for (zone, failure) in failures {
-    //         let sid = saga_id.clone();
-    //         if let Err(error) = update::note_zone_update_failure(sid, zone, failure, &self.system).await
-    //         {
-    //             warn!(
-    //                 ?error,
-    //                 "failed to note location update failure in `UpdateLocations` saga -- ignoring"
-    //             );
-    //         }
-    //     }
-    // }
-
-    // #[instrument(level = "debug", skip(self))]
-    // async fn do_get_alerts(&self) -> Vec<WeatherAlert> {
-    //     match self.services.active_alerts().await {
-    //         Ok(alerts) => alerts,
-    //         Err(error) => {
-    //             warn!(?error, "failed to pull NOAA weather alerts -- skipping");
-    //             vec![]
-    //         },
-    //     }
-    // }
 }
 
 #[instrument(level = "debug", skip(system))]
@@ -213,8 +133,8 @@ async fn do_update_zone_alerts(
     saga_id: ActorId, zones: Vec<LocationZoneCode>, services: UpdateLocationServicesRef,
     system: ActorSystem,
 ) -> Result<(), UpdateLocationsError> {
-    let updated_zones: HashSet<_> = zones.into_iter().collect();
-    let mut alerted_zones = HashSet::with_capacity(updated_zones.len());
+    let update_scope: HashSet<_> = zones.into_iter().collect();
+    let mut alerted_zones = HashSet::with_capacity(update_scope.len());
 
     // -- zones with alerts
     let alerts = services.active_alerts().await?;
@@ -226,7 +146,7 @@ async fn do_update_zone_alerts(
             .affected_zones
             .clone()
             .into_iter()
-            .filter(|z| updated_zones.contains(z))
+            .filter(|z| update_scope.contains(z))
             .collect();
 
         let (alerted, failures) = do_alert_affected_zones(affected, alert, &system).await;
@@ -235,7 +155,7 @@ async fn do_update_zone_alerts(
     }
 
     // -- unaffected zones
-    let unaffected_zones: Vec<_> = updated_zones.difference(&alerted_zones).cloned().collect();
+    let unaffected_zones: Vec<_> = update_scope.difference(&alerted_zones).cloned().collect();
     info!(?alerted_zones, ?unaffected_zones, %nr_alerts, "DMR: finish alerting with unaffected notes...");
     let unaffected_failures = do_update_unaffected_zones(unaffected_zones, &system).await;
     update_failures.extend(unaffected_failures);
@@ -302,10 +222,3 @@ async fn do_note_alert_update_failures(
         Err(errors.pop().unwrap())
     }
 }
-
-// #[instrument(level="debug", skip(services))]
-// async fn do_get_alerts(services: &UpdateLocationServicesRef) -> Option<Vec<WeatherAlert>> {
-//     match services.active_alerts().await {
-//
-//     }
-// }

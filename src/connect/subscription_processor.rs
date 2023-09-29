@@ -5,24 +5,28 @@ use crate::connect::{
 use coerce::actor::system::ActorSystem;
 use coerce::actor::{ActorId, ActorRefErr, IntoActor, IntoActorId};
 use coerce::persistent::storage::JournalEntry;
-use coerce_cqrs::projection::processor::{ProcessEntry, ProcessResult, ProcessorContext};
+use coerce_cqrs::projection::processor::{
+    EntryPayloadTypes, ProcessEntry, ProcessResult, ProcessorContext,
+};
 use coerce_cqrs::projection::ProjectionError;
 use std::fmt;
 use tagid::{Entity, Id, Label};
 
 #[derive(Clone)]
 pub struct EventSubscriptionProcessor<T: EventCommandTopic> {
+    known_entry_types: EntryPayloadTypes,
     channel_ref: EventSubscriptionChannelRef<T>,
     channel_id: Id<EventSubscriptionChannel<T>, String>,
 }
 
 impl<T: EventCommandTopic + Label> EventSubscriptionProcessor<T> {
     pub async fn new(topic: T, system: &ActorSystem) -> Result<Self, ConnectError> {
+        let known_entry_types = EntryPayloadTypes::single(T::journal_message_type_indicator());
         let id = EventSubscriptionChannel::<T>::next_id();
         let channel_ref = EventSubscriptionChannel::new(topic)
             .into_actor(Some(id.clone()), system)
             .await?;
-        Ok(Self { channel_ref, channel_id: id })
+        Ok(Self { known_entry_types, channel_ref, channel_id: id })
     }
 
     #[allow(dead_code)]
@@ -56,10 +60,13 @@ impl<T: EventCommandTopic> fmt::Debug for EventSubscriptionProcessor<T> {
 impl<T: EventCommandTopic> ProcessEntry for EventSubscriptionProcessor<T> {
     type Projection = ();
 
+    fn known_entry_types(&self) -> &EntryPayloadTypes {
+        &self.known_entry_types
+    }
+
     fn apply_entry_to_projection(
         &self, _: &Self::Projection, entry: JournalEntry, ctx: &ProcessorContext,
     ) -> ProcessResult<Self::Projection, ProjectionError> {
-        // let source_id = ctx.persistence_id().into_actor_id();
         let payload_type = entry.payload_type.clone();
 
         let envelope = match Self::from_bytes::<T::Event>(entry) {

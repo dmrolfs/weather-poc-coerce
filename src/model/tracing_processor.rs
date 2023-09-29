@@ -2,8 +2,8 @@ use coerce::actor::message::Message;
 use coerce::persistent::storage::JournalEntry;
 use coerce::persistent::PersistentActor;
 use coerce_cqrs::projection::processor::{
-    ProcessEntry, ProcessResult, Processor, ProcessorContext, ProcessorEngine, ProcessorError,
-    ProcessorSourceRef, Ready, RegularInterval,
+    EntryPayloadTypes, ProcessEntry, ProcessResult, Processor, ProcessorContext, ProcessorEngine,
+    ProcessorError, ProcessorSourceRef, Ready, RegularInterval,
 };
 use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorageRef};
 use std::fmt::Debug;
@@ -24,6 +24,10 @@ impl<E: Message + Debug> Default for TracingApplicator<E> {
 #[async_trait]
 impl<E: Message + Debug> ProcessEntry for TracingApplicator<E> {
     type Projection = ();
+
+    fn known_entry_types(&self) -> &EntryPayloadTypes {
+        &EntryPayloadTypes::All
+    }
 
     fn apply_entry_to_projection(
         &self, projection: &Self::Projection, entry: JournalEntry, ctx: &ProcessorContext,

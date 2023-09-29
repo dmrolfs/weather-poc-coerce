@@ -10,8 +10,9 @@ use crate::{settings, Settings};
 use anyhow::anyhow;
 use axum::extract::FromRef;
 use coerce::actor::system::ActorSystem;
-use coerce_cqrs::postgres::{PostgresStorageConfig, PostgresStorageProvider};
-use coerce_cqrs::projection::processor::{ProcessorSourceProvider, ProcessorSourceRef};
+use coerce::persistent::Persistence;
+use coerce_cqrs::postgres::PostgresStorageProvider;
+use coerce_cqrs::projection::processor::ProcessorSourceProvider;
 use sqlx::PgPool;
 use std::fmt;
 use std::str::FromStr;
@@ -38,24 +39,6 @@ impl FromRef<AppState> for ActorSystem {
     }
 }
 
-// impl FromRef<AppState> for RegistrarAggregate {
-//     fn from_ref(app: &AppState) -> Self {
-//         app.registrar_agg.clone()
-//     }
-// }
-
-// impl FromRef<AppState> for UpdateLocationsSaga {
-//     fn from_ref(app: &AppState) -> Self {
-//         app.update_locations_agg.clone()
-//     }
-// }
-
-// impl FromRef<AppState> for LocationZoneAggregate {
-//     fn from_ref(app: &AppState) -> Self {
-//         app.location_agg.clone()
-//     }
-// }
-
 impl FromRef<AppState> for WeatherProjection {
     fn from_ref(app: &AppState) -> Self {
         app.location_zone_support.weather_projection.clone()
@@ -74,12 +57,6 @@ impl FromRef<AppState> for UpdateLocationsHistoryProjection {
     }
 }
 
-// impl FromRef<AppState> for UpdateLocationsProjection {
-//     fn from_ref(app: &AppState) -> Self {
-//         app.update_locations_agg.clone()
-//     }
-// }
-
 impl FromRef<AppState> for PgPool {
     fn from_ref(app: &AppState) -> Self {
         app.db_pool.clone()
@@ -93,8 +70,14 @@ impl AppState {
     ) -> Result<AppState, ApiBootstrapError> {
         let journal_storage_config =
             settings::storage_config_from(&settings.database, &settings.zone);
-        let journal_storage =
-            do_initialize_journal_storage(journal_storage_config, &system).await?;
+        let journal_storage_provider =
+            PostgresStorageProvider::connect(journal_storage_config, &system).await?;
+        let journal_storage = journal_storage_provider
+            .processor_source()
+            .ok_or_else(|| anyhow!("no journal processor storage!"))
+            .map_err(coerce_cqrs::postgres::PostgresStorageError::Storage)?;
+
+        let system = system.to_persistent(Persistence::from(journal_storage_provider));
 
         // -- registrar
         let registrar_support = Registrar::initialize_aggregate_support(
@@ -138,14 +121,14 @@ impl AppState {
     }
 }
 
-#[instrument(level = "trace", skip(system))]
-async fn do_initialize_journal_storage(
-    config: PostgresStorageConfig, system: &ActorSystem,
-) -> Result<ProcessorSourceRef, ApiBootstrapError> {
-    PostgresStorageProvider::connect(config, system)
-        .await?
-        .processor_source()
-        .ok_or_else(|| anyhow!("no processor storage!"))
-        .map_err(coerce_cqrs::postgres::PostgresStorageError::Storage)
-        .map_err(|err| err.into())
-}
+// #[instrument(level = "trace", skip(system))]
+// async fn do_initialize_journal_storage(
+//     config: PostgresStorageConfig, system: &ActorSystem,
+// ) -> Result<StorageProviderRef, ApiBootstrapError> {
+//     let provider = PostgresStorageProvider::connect(config, system).await?;
+//     Ok(Arc::new(provider))
+// .processor_source()
+// .ok_or_else(|| anyhow!("no processor storage!"))
+// .map_err(coerce_cqrs::postgres::PostgresStorageError::Storage)
+// .map_err(|err| err.into())
+// }
