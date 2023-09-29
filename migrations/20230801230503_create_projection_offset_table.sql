@@ -1,9 +1,9 @@
 -- Add migration script here
 CREATE TABLE IF NOT EXISTS public.projection_offset(
-  projection_id VARCHAR (255) NOT NULL,
+  projection_id VARCHAR(255) NOT NULL,
   persistence_id VARCHAR(255) NOT NULL,
   current_offset BIGINT NOT NULL,
-  last_updated at BIGINT NOT NULL,
+  last_updated_at BIGINT NOT NULL,
 
   PRIMARY KEY(projection_id, persistence_id)
 );
