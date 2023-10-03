@@ -1,4 +1,4 @@
-use super::location_status::{LocationStatus, MultiIndexLocationStatusMap};
+use crate::model::update::location_status::{LocationStatus, MultiIndexLocationStatusMap};
 use crate::model::update::{UpdateLocationsCommand, UpdateLocationsError, UpdateLocationsEvent};
 use crate::model::LocationZoneCode;
 use coerce_cqrs::{AggregateState, CommandResult};
@@ -44,7 +44,7 @@ impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for UpdateLoca
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, bitcode::Encode, bitcode::Decode, Serialize, Deserialize)]
 pub struct QuiescentLocationsUpdate;
 
 impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for QuiescentLocationsUpdate {
@@ -286,7 +286,7 @@ impl ActiveLocationsUpdate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode, Serialize, Deserialize)]
 pub struct FinishedLocationsUpdate;
 
 #[async_trait]
