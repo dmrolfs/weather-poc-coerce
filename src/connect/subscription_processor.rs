@@ -49,7 +49,7 @@ impl<T: EventCommandTopic + Label> EventSubscriptionProcessor<T> {
 
 impl<T: EventCommandTopic> fmt::Debug for EventSubscriptionProcessor<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let topic_type = std::any::type_name::<T>();
+        let topic_type = tynm::type_name::<T>();
         f.debug_struct("EventSubscriptionProcessor")
             .field("topic", &topic_type)
             .field("channel_ref", &self.channel_ref)

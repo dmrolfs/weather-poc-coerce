@@ -42,7 +42,7 @@ impl<E: Message + Debug> ProcessEntry for TracingApplicator<E> {
                 persistence_id = ctx.persistence_id(),
             ),
             Err(error) => {
-                let type_name = std::any::type_name::<E>();
+                let type_name = tynm::type_name::<E>();
                 error!(
                     "EVENT_TRACE: {projection}[{persistence_id}] failed to convert {type_name} event from bytes: {error:?}",
                     persistence_id = ctx.persistence_id(),

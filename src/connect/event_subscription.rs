@@ -57,7 +57,7 @@ pub struct EventSubscriptionChannel<T> {
 
 impl<T> Debug for EventSubscriptionChannel<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let topic_name = std::any::type_name::<T>();
+        let topic_name = tynm::type_name::<T>();
         f.debug_struct("EventSubscriptionChannel")
             .field("topic", &topic_name)
             .field("subscriptions", &self.subscriptions)

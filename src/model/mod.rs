@@ -392,7 +392,7 @@ impl<'a> PropertyExtractor<'a> {
         trace!(
             ?result,
             "DMR: feature property {p_type} {property}={p:?}",
-            p_type = std::any::type_name::<T>()
+            p_type = tynm::type_namem::<T>(1)
         );
         result.map_err(|err| err.into())
     }
