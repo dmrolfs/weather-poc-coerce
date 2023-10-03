@@ -347,7 +347,6 @@ impl TryFrom<Feature> for WeatherAlert {
 
     #[instrument(level = "trace", name = "DMR_WEATHER_ALERT_TRY_FROM_FEATURE", skip(f))]
     fn try_from(f: Feature) -> Result<Self, Self::Error> {
-        debug!(feature=?f, "DMR: trying to parse alert from geo feature");
         let extract = PropertyExtractor::new("weather_alert", &f);
 
         let affected: Vec<String> = extract.property("affectedZones")?;
@@ -355,6 +354,7 @@ impl TryFrom<Feature> for WeatherAlert {
         for zone in affected {
             affected_zones.push(LocationZoneCode::parse(zone)?);
         }
+        debug!("DMR: affected zones for current alert geo feature: {affected_zones:?}");
 
         Ok(Self {
             affected_zones,

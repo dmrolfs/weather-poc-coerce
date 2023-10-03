@@ -86,6 +86,7 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for ActiveLocationZo
     type Error = LocationZoneError;
     type State = LocationZoneState;
 
+    #[instrument(level = "debug", skip())]
     fn handle_command(
         &self, command: &LocationZoneCommand,
     ) -> CommandResult<Vec<LocationZoneEvent>, Self::Error> {
@@ -114,6 +115,7 @@ impl AggregateState<LocationZoneCommand, LocationZoneEvent> for ActiveLocationZo
         }
     }
 
+    #[instrument(level = "debug")]
     fn apply_event(&mut self, event: LocationZoneEvent) -> Option<Self::State> {
         use LocationZoneEvent::*;
 

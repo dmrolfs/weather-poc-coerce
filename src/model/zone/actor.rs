@@ -32,6 +32,7 @@ impl From<LocationZoneCode> for LocationZoneId {
 
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
+#[instrument(level = "debug", skip(system))]
 pub async fn location_zone_for(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<LocationZoneAggregate, LocationZoneError> {
@@ -61,6 +62,7 @@ impl PartialEq for LocationZone {
 //todo: make this into an `AggregateSupport` trait to be written via derive macro
 // unique aggregate support + fn initialize_aggregate(...) ..
 impl LocationZone {
+    #[instrument(level = "debug", skip(journal_storage, settings, system))]
     pub async fn initialize_aggregate_support(
         journal_storage: ProcessorSourceRef, noaa: NoaaWeatherServices, settings: &Settings,
         system: &ActorSystem,
@@ -145,7 +147,7 @@ impl LocationZone {
         }
     }
 
-    #[instrument(level = "debug", skip(ctx))]
+    #[instrument(level = "debug", skip(self, ctx))]
     fn do_observe(&self, zone: LocationZoneCode, ctx: &ActorContext) {
         let zone_0 = zone.clone();
         let services = self.services.clone();
@@ -175,7 +177,7 @@ impl LocationZone {
         );
     }
 
-    #[instrument(level = "debug", skip(ctx))]
+    #[instrument(level = "debug", skip(self, ctx))]
     fn do_forecast(&self, zone: LocationZoneCode, ctx: &ActorContext) {
         let zone_0 = zone.clone();
         let services = self.services.clone();
@@ -228,7 +230,7 @@ impl PersistentActor for LocationZone {
 
 #[async_trait]
 impl Handler<LocationZoneCommand> for LocationZone {
-    #[instrument(level = "info", skip(ctx))]
+    #[instrument(level = "info", skip(self, ctx))]
     async fn handle(
         &mut self, command: LocationZoneCommand, ctx: &mut ActorContext,
     ) -> <LocationZoneCommand as Message>::Result {
@@ -270,19 +272,6 @@ impl Handler<LocationZoneCommand> for LocationZone {
         CommandResult::ok(())
     }
 }
-
-// impl ApplyAggregateEvent<LocationZoneEvent> for LocationZone {
-//     type BaseType = Self;
-//
-//     fn apply_event(
-//         &mut self, event: LocationZoneEvent, ctx: &mut ActorContext,
-//     ) -> Option<Self::BaseType> {
-//         if let Some(new_state) = self.state.apply_event(event, ctx) {
-//             self.state = new_state;
-//         }
-//         None
-//     }
-// }
 
 #[async_trait]
 impl Recover<LocationZoneEvent> for LocationZone {

@@ -64,10 +64,11 @@ impl FromRef<AppState> for PgPool {
 }
 
 impl AppState {
-    #[instrument(level = "debug", skip(system))]
+    #[instrument(level = "debug", skip(settings, system))]
     pub async fn new(
         settings: &Settings, system: ActorSystem, db_pool: PgPool,
     ) -> Result<AppState, ApiBootstrapError> {
+        info!(?settings, system=%system.system_id(), "creating application state");
         let journal_storage_config =
             settings::storage_config_from(&settings.database, &settings.zone);
         let journal_storage_provider =

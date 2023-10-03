@@ -49,6 +49,10 @@ impl UpdateLocations {
 }
 
 impl UpdateLocations {
+    #[instrument(
+        level = "debug",
+        skip(journal_processor_source, location_zone_source, settings, system)
+    )]
     pub async fn initialize_aggregate_support(
         journal_processor_source: ProcessorSourceRef, location_zone_source: ProcessorSourceRef,
         settings: &Settings, system: &ActorSystem,

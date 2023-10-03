@@ -16,14 +16,14 @@ use crate::model::LocationZoneCode;
 use coerce::actor::system::ActorSystem;
 use coerce_cqrs::CommandResult;
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn update_weather(
     system: &ActorSystem,
 ) -> Result<Option<UpdateLocationsId>, RegistrarFailure> {
     result_from(registrar_actor(system).await?.send(UpdateWeather).await?)
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn clear_monitoring(system: &ActorSystem) -> Result<(), RegistrarFailure> {
     result_from(registrar_actor(system).await?.send(AC::ClearZoneMonitoring).await?)
 }
@@ -37,7 +37,7 @@ pub async fn monitor_forecast_zone(
     result_from(registrar_ref?.send(AC::MonitorForecastZone(zone)).await?)
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 pub async fn forget_forecast_zone(
     zone: LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), RegistrarFailure> {

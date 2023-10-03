@@ -198,7 +198,7 @@ async fn do_update_unaffected_zones(
     failures
 }
 
-#[instrument(level = "trace", skip(system))]
+#[instrument(level = "debug", skip(system))]
 async fn do_note_alert_update_failures(
     saga_id: ActorId, zone_failures: ZoneUpdateFailures, system: &ActorSystem,
 ) -> Result<(), UpdateLocationsError> {

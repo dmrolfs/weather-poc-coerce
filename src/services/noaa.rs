@@ -134,6 +134,11 @@ impl ZoneWeatherApi for NoaaWeatherApi {
         &self, zone: &LocationZoneCode,
     ) -> Result<WeatherFrame, NoaaWeatherError> {
         let mut url = self.base_url.clone();
+        debug!(
+            "zone.as_ref:{} || zone.clone.as_ref:{}",
+            zone.as_ref(),
+            zone.clone().as_ref()
+        );
         url.path_segments_mut()
             .unwrap()
             .push("zones")

@@ -49,7 +49,7 @@ pub async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate,
             Ok(actor_ref)
         },
         None => {
-            let create = debug_span!("Registrar not found - creating", %id);
+            let create = debug_span!("Registrar Scheduling", %id);
             let _create_guard = create.enter();
 
             let id = singleton_id().into_actor_id();
@@ -71,6 +71,7 @@ pub struct Registrar {
 }
 
 impl Registrar {
+    #[instrument(level = "debug", skip(journal_storage, settings, system))]
     pub async fn initialize_aggregate_support(
         journal_storage: ProcessorSourceRef, services: RegistrarServices, settings: &Settings,
         system: &ActorSystem,
