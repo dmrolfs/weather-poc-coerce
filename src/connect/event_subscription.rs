@@ -164,7 +164,16 @@ impl<T: EventCommandTopic> Handler<EventEnvelope<T::Event>> for EventSubscriptio
         &mut self, envelope: EventEnvelope<T::Event>, ctx: &mut ActorContext,
     ) -> <EventEnvelope<T::Event> as Message>::Result {
         let commands = self.topic.commands_from_event(&envelope);
-        for subscription in self.subscriptions.get_by_publisher_id(envelope.source_id()) {
+        let publisher_id = envelope.source_id();
+        let matched_subscriptions = self.subscriptions.get_by_publisher_id(publisher_id);
+        debug!(
+            ?matched_subscriptions,
+            "[{subscription_name}]: {header}event subscriptions matched to publisher: {publisher_id}",
+            subscription_name=tynm::type_name::<T>(),
+            header=if matched_subscriptions.is_empty() { "no " } else { "" }
+        );
+
+        for subscription in matched_subscriptions {
             self.notify_subscriber_for_event(subscription, &commands, ctx).await;
         }
     }
