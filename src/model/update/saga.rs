@@ -307,7 +307,7 @@ pub mod support {
             UpdateLocationsHistory::apply_event,
         );
 
-        let interval = Duration::from_secs(60);
+        let interval = Duration::from_secs(2);
         let engine: ProcessorEngine<Ready<PersistenceId, UpdateLocationsHistory, _, _>> =
             Processor::builder_for::<UpdateLocations, _, _, _, _>(UPDATE_LOCATIONS_HISTORY_VIEW)
                 .with_entry_handler(update_history_apply)
@@ -339,7 +339,7 @@ pub mod support {
         .await?;
         let controller_apply = UpdateLocationsController::new(system.clone(), services);
 
-        let interval = Duration::from_secs(10);
+        let interval = Duration::from_secs(2);
         let engine: ProcessorEngine<Ready<PersistenceId, (), _, _>> =
             Processor::builder_for::<UpdateLocations, _, _, _, _>(UPDATE_LOCATIONS_CONTROLLER)
                 .with_entry_handler(controller_apply)
@@ -371,7 +371,7 @@ pub mod support {
             EventSubscriptionProcessor::new(LocationZoneBroadcastTopic, system).await?;
         let subscription_channel_actor_id = subscription_processor.channel_actor_id();
 
-        let interval = Duration::from_secs(60);
+        let interval = Duration::from_secs(2);
         let engine: ProcessorEngine<Ready<PersistenceId, (), _, _>> =
             Processor::builder_for::<LocationZone, _, _, _, _>(UPDATE_LOCATION_ZONE_SUBSCRIPTION)
                 .with_entry_handler(subscription_processor)

@@ -125,7 +125,7 @@ impl LocationZone {
         let weather_processor = support::weather_processor(
             journal_storage,
             weather_projection.clone(),
-            Duration::from_secs(60),
+            Duration::from_secs(2),
             system,
         )?;
 
