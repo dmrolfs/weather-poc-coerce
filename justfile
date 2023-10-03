@@ -27,7 +27,7 @@ init-db:
 
 run:
   RUST_BACKTRACE=full \
-  RUST_LOG="debug,weather=debug,coerce::actor=trace" \
+  RUST_LOG="info,weather=debug,coerce_cqrs=debug,coerce::actor=info" \
   cargo run -- --secrets ./resources/secrets.yaml | bunyan
 
 #  cargo test
