@@ -227,13 +227,9 @@ async fn serve_location_weather(
     Path(zone_code): Path<LocationZoneCode>, State(view_repo): State<WeatherProjection>,
 ) -> impl IntoResponse {
     let view_id = PersistenceId::from_aggregate_id::<LocationZone>(zone_code.as_ref());
-    let view: Result<Option<WeatherView>, ApiError> = view_repo
-        .load_projection(&view_id)
-        .await
-        .map_err(|err| err.into());
+    let view: Result<Option<WeatherView>, ApiError> =
+        view_repo.load_projection(&view_id).await.map_err(|err| err.into());
     debug!("location {zone_code} weather: {view:?}");
 
-    view
-        .map(|ov| ov.map(Json))
-        .map(OptionalResult)
+    view.map(|ov| ov.map(Json)).map(OptionalResult)
 }
