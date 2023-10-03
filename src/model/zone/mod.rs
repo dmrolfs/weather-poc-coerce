@@ -15,13 +15,11 @@ pub use services::{initialize_services, LocationServices, LocationServicesRef};
 
 use crate::model::{LocationZoneCode, WeatherAlert};
 use coerce::actor::system::ActorSystem;
-use coerce::actor::IntoActorId;
 
 #[instrument(level = "debug", skip(system))]
 pub async fn notify_observe(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
     let zone_ref = location_zone_for(zone, system).await?;
     zone_ref.notify(LocationZoneCommand::Observe)?;
     Ok(())
@@ -31,7 +29,6 @@ pub async fn notify_observe(
 pub async fn notify_forecast(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
     let zone_ref = location_zone_for(zone, system).await?;
     zone_ref.notify(LocationZoneCommand::Forecast)?;
     Ok(())
@@ -41,7 +38,6 @@ pub async fn notify_forecast(
 pub async fn notify_update_alert(
     zone: &LocationZoneCode, alert: Option<WeatherAlert>, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
     let zone_ref = location_zone_for(zone, system).await?;
     zone_ref.notify(LocationZoneCommand::NoteAlert(alert))?;
     Ok(())

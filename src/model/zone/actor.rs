@@ -60,7 +60,7 @@ pub fn actor_id_from_zone(zone: LocationZoneCode) -> ActorId {
 
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
-#[instrument(level = "debug", skip(system))]
+#[instrument(level = "trace", skip(system))]
 pub async fn location_zone_for(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<LocationZoneAggregate, LocationZoneError> {
@@ -68,12 +68,12 @@ pub async fn location_zone_for(
     let actor_id = aggregate_id.to_actor_id();
     match system.get_tracked_actor(actor_id.clone()).await {
         Some(actor_ref) => {
-            debug!("DMR: Found LocationZone[{zone}]: {actor_ref:?}");
+            trace!("Found LocationZone[{zone}]: {actor_ref:?}");
             Ok(actor_ref)
         },
 
         None => {
-            let create = debug_span!("LocationZone Scheduling", %aggregate_id, %actor_id);
+            let create = trace_span!("LocationZone Scheduling", %aggregate_id, %actor_id);
             let _create_guard = create.enter();
 
             let zone_aggregate = LocationZone::new(services())
