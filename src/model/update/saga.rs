@@ -17,7 +17,7 @@ use coerce_cqrs::projection::processor::ProcessorSourceRef;
 use coerce_cqrs::{Aggregate, AggregateState, CommandResult};
 use std::str::FromStr;
 use std::sync::Arc;
-use tagid::{CuidId, Entity, Id, Label, Labeling};
+use tagid::{CuidId, Entity, Id, Label};
 use tracing::Instrument;
 use url::Url;
 
@@ -134,8 +134,7 @@ impl UpdateLocations {
         tokio::spawn(
             async move {
                 debug!("DMR: Saga[{id}] subscribing update process to zones events: {zones:?}");
-                let saga_id: UpdateLocationsId =
-                    Id::direct(UpdateLocations::labeler().label(), id.to_string());
+                let saga_id: UpdateLocationsId = Id::for_labeled(id.to_string());
                 if let Err(error) = services.add_subscriber(saga_id, &zones).await {
                     error!(?error, "failed to register update locations saga, {id}, for location event broadcasts.");
                 }

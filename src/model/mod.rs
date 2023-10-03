@@ -16,6 +16,7 @@ use geojson::Feature;
 use serde::de::DeserializeOwned;
 use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
+use std::convert::Infallible;
 use std::fmt;
 use std::str::FromStr;
 use strum_macros::{Display, EnumMessage, EnumString, EnumVariantNames, IntoStaticStr};
@@ -97,9 +98,43 @@ impl From<LocationZoneCode> for String {
     }
 }
 
+impl FromStr for LocationZoneCode {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::new(s))
+    }
+}
+
+impl From<&str> for LocationZoneCode {
+    fn from(zone_code: &str) -> Self {
+        LocationZoneCode::new(zone_code)
+    }
+}
+
+impl From<String> for LocationZoneCode {
+    fn from(zone_code: String) -> Self {
+        LocationZoneCode::new(zone_code)
+    }
+}
+
 impl AsRef<str> for LocationZoneCode {
     fn as_ref(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl core::ops::Deref for LocationZoneCode {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::borrow::Borrow<str> for LocationZoneCode {
+    fn borrow(&self) -> &str {
+        &self.0
     }
 }
 

@@ -3,8 +3,8 @@ mod queries;
 mod state;
 
 pub use actor::{
-    location_zone_for, support::LocationZoneAggregateSupport, LocationZone, LocationZoneAggregate,
-    LocationZoneId,
+    actor_id_from_zone, location_zone_for, support::LocationZoneAggregateSupport,
+    zone_id_from_actor_id, LocationZone, LocationZoneAggregate, LocationZoneId,
 };
 pub use errors::LocationZoneError;
 pub use protocol::{LocationZoneCommand, LocationZoneEvent};
@@ -21,9 +21,9 @@ use coerce::actor::IntoActorId;
 pub async fn notify_observe(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
-        zone_ref.notify(LocationZoneCommand::Observe)?;
-    }
+    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
+    let zone_ref = location_zone_for(zone, system).await?;
+    zone_ref.notify(LocationZoneCommand::Observe)?;
     Ok(())
 }
 
@@ -31,9 +31,9 @@ pub async fn notify_observe(
 pub async fn notify_forecast(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
-        zone_ref.notify(LocationZoneCommand::Forecast)?;
-    }
+    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
+    let zone_ref = location_zone_for(zone, system).await?;
+    zone_ref.notify(LocationZoneCommand::Forecast)?;
     Ok(())
 }
 
@@ -41,9 +41,9 @@ pub async fn notify_forecast(
 pub async fn notify_update_alert(
     zone: &LocationZoneCode, alert: Option<WeatherAlert>, system: &ActorSystem,
 ) -> Result<(), LocationZoneError> {
-    if let Some(zone_ref) = system.get_tracked_actor::<LocationZone>(zone.into_actor_id()).await {
-        zone_ref.notify(LocationZoneCommand::NoteAlert(alert))?;
-    }
+    let zone_actor_id = LocationZoneId::from(zone.clone()).into_actor_id();
+    let zone_ref = location_zone_for(zone, system).await?;
+    zone_ref.notify(LocationZoneCommand::NoteAlert(alert))?;
     Ok(())
 }
 
@@ -122,6 +122,7 @@ mod services {
 }
 
 mod errors {
+    use coerce::actor::ActorId;
     use strum_macros::{Display, EnumDiscriminants};
     use thiserror::Error;
 
@@ -143,6 +144,9 @@ mod errors {
 
         #[error("{0}")]
         Projection(#[from] coerce_cqrs::projection::ProjectionError),
+
+        #[error("ActorId cannot be used as LocationZoneId: {0}")]
+        BadActorId(ActorId),
     }
 
     impl From<coerce::persistent::PersistErr> for LocationZoneFailure {

@@ -10,7 +10,7 @@ use crate::{settings, Settings};
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
 use coerce::actor::system::ActorSystem;
-use coerce::actor::LocalActorRef;
+use coerce::actor::{ActorId, IntoActor, IntoActorId, LocalActorRef, ToActorId};
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistErr, PersistentActor, Recover, RecoverSnapshot};
 use coerce_cqrs::postgres::PostgresProjectionStorage;
@@ -18,7 +18,7 @@ use coerce_cqrs::projection::processor::ProcessorSourceRef;
 use coerce_cqrs::{Aggregate, AggregateState, CommandResult, SnapshotTrigger};
 use std::sync::Arc;
 use std::time::Duration;
-use tagid::{Entity, Id, Label};
+use tagid::{Entity, Id, Label, Labeling};
 use tracing::Instrument;
 
 pub type LocationZoneId = Id<LocationZone, LocationZoneCode>;
@@ -29,6 +29,34 @@ impl From<LocationZoneCode> for LocationZoneId {
     }
 }
 
+impl From<LocationZoneId> for LocationZoneCode {
+    fn from(id: LocationZoneId) -> Self {
+        id.id
+    }
+}
+
+pub fn zone_id_from_actor_id(actor_id: ActorId) -> Result<LocationZoneId, LocationZoneError> {
+    let parts: Vec<_> = actor_id.split(tagid::DELIMITER).collect();
+    if parts.len() != 2 {
+        return Err(LocationZoneError::BadActorId(actor_id));
+    }
+
+    let aggregate_name = parts[0];
+    let aggregate_id = parts[1];
+
+    if aggregate_name != LocationZone::labeler().label() {
+        return Err(LocationZoneError::BadActorId(actor_id));
+    }
+
+    Ok(LocationZoneId::for_labeled(LocationZoneCode::new(
+        aggregate_id,
+    )))
+}
+
+pub fn actor_id_from_zone(zone: LocationZoneCode) -> ActorId {
+    let aggregate_id: LocationZoneId = zone.into();
+    aggregate_id.into_actor_id()
+}
 
 pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 
@@ -36,14 +64,25 @@ pub type LocationZoneAggregate = LocalActorRef<LocationZone>;
 pub async fn location_zone_for(
     zone: &LocationZoneCode, system: &ActorSystem,
 ) -> Result<LocationZoneAggregate, LocationZoneError> {
-    use coerce::actor::IntoActor;
+    let aggregate_id: LocationZoneId = zone.clone().into();
+    let actor_id = aggregate_id.to_actor_id();
+    match system.get_tracked_actor(actor_id.clone()).await {
+        Some(actor_ref) => {
+            debug!("DMR: Found LocationZone[{zone}]: {actor_ref:?}");
+            Ok(actor_ref)
+        },
 
-    let aggregate_id: LocationZoneId = Id::for_labeled(zone.clone());
-    let aggregate = LocationZone::new(services())
-        .with_snapshots(5)
-        .into_actor(Some(aggregate_id), system)
-        .await?;
-    Ok(aggregate)
+        None => {
+            let create = debug_span!("LocationZone Scheduling", %aggregate_id, %actor_id);
+            let _create_guard = create.enter();
+
+            let zone_aggregate = LocationZone::new(services())
+                .with_snapshots(5)
+                .into_actor(Some(aggregate_id), system)
+                .await?;
+            Ok(zone_aggregate)
+        },
+    }
 }
 
 #[derive(Debug, Clone, Label)]
@@ -113,8 +152,8 @@ impl LocationZone {
 }
 
 impl LocationZone {
-    fn location_zone_from_ctx(ctx: &ActorContext) -> LocationZoneCode {
-        LocationZoneCode::new(ctx.id().to_string())
+    fn location_zone_from_ctx(ctx: &ActorContext) -> Result<LocationZoneCode, LocationZoneError> {
+        zone_id_from_actor_id(ctx.id().clone()).map(|aggregate_id| aggregate_id.into())
     }
 
     async fn do_handle_snapshot(&mut self, ctx: &mut ActorContext) -> Result<(), PersistErr> {
@@ -135,12 +174,14 @@ impl LocationZone {
     #[instrument(level = "debug", skip(self, ctx))]
     fn then_run(&self, command: LocationZoneCommand, ctx: &ActorContext) {
         match command {
-            LocationZoneCommand::Observe => {
-                self.do_observe(Self::location_zone_from_ctx(ctx), ctx);
+            LocationZoneCommand::Observe => match Self::location_zone_from_ctx(ctx) {
+                Ok(zone_code) => self.do_observe(zone_code, ctx),
+                Err(error) => warn!("cannot observe {}: {error:?} - skipping", ctx.id()),
             },
 
-            LocationZoneCommand::Forecast => {
-                self.do_forecast(Self::location_zone_from_ctx(ctx), ctx);
+            LocationZoneCommand::Forecast => match Self::location_zone_from_ctx(ctx) {
+                Ok(zone_code) => self.do_forecast(zone_code, ctx),
+                Err(error) => warn!("cannot forecast {}: {error:?} - skipping", ctx.id()),
             },
 
             _ => {},
