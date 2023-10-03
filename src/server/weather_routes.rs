@@ -1,7 +1,7 @@
 use crate::model::registrar::{self, MonitoredZonesProjection, MonitoredZonesView};
 use crate::model::update::{
     UpdateLocationsEvent, UpdateLocationsHistory, UpdateLocationsHistoryProjection,
-    UpdateLocationsState,
+    UpdateLocationsId, UpdateLocationsState,
 };
 use crate::model::zone::{WeatherProjection, WeatherView};
 use crate::model::{LocationZone, LocationZoneCode, UpdateLocations};
@@ -70,7 +70,7 @@ async fn update_weather(State(system): State<ActorSystem>) -> impl IntoResponse 
         .map_err::<ApiError, _>(|err| err.into())
         .map(|update_saga_id| {
             update_saga_id
-                .map(|id| (StatusCode::OK, id.to_string()))
+                .map(|id| (StatusCode::OK, id.id.to_string()))
                 .unwrap_or_else(|| (StatusCode::OK, "".to_string()))
         })
 }
@@ -118,9 +118,9 @@ impl AsRef<str> for UpdateProcessId {
 )]
 #[axum::debug_handler]
 async fn serve_update_status(
-    Path(update_id): Path<UpdateProcessId>,
-    State(view_repo): State<UpdateLocationsHistoryProjection>,
+    Path(update_id_rep): Path<String>, State(view_repo): State<UpdateLocationsHistoryProjection>,
 ) -> impl IntoResponse {
+    let update_id = UpdateLocationsId::for_labeled(update_id_rep);
     let view_id = update_id.into();
     view_repo
         .load_projection(&view_id)
