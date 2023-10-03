@@ -4,7 +4,7 @@ use crate::model::{update, LocationZoneCode, WeatherAlert};
 use crate::model::{zone, UpdateLocations};
 use crate::services::noaa::AlertApi;
 use coerce::actor::system::ActorSystem;
-use coerce::actor::{ActorId, IntoActorId};
+use coerce::actor::{ActorId, ToActorId};
 use coerce::persistent::storage::JournalEntry;
 use coerce_cqrs::projection::processor::{
     EntryPayloadTypes, ProcessEntry, ProcessResult, ProcessorContext,
@@ -68,9 +68,9 @@ impl ProcessEntry for UpdateLocationsController {
         };
 
         if let UpdateLocationsEvent::Started(zones) = event {
-            let saga_id = ctx.persistence_id().into_actor_id();
             self.do_spawn_update_observations(&zones);
             self.do_spawn_update_forecasts(&zones);
+            let saga_id = ctx.persistence_id().to_actor_id();
             self.do_spawn_update_zone_alerts(saga_id, zones);
         }
 

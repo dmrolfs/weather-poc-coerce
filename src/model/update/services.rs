@@ -3,7 +3,7 @@ use crate::model::update::{LocationZoneBroadcastTopic, UpdateLocationsError, Upd
 use crate::model::{LocationZoneCode, WeatherAlert};
 use crate::services::noaa::{AlertApi, NoaaWeatherError, NoaaWeatherServices};
 use coerce::actor::system::ActorSystem;
-use coerce::actor::{ActorId, ActorRefErr};
+use coerce::actor::{ActorId, ActorRefErr, IntoActorId};
 use once_cell::sync::OnceCell;
 use std::collections::HashSet;
 use std::fmt;
@@ -55,15 +55,13 @@ impl UpdateLocationServices {
     pub async fn add_subscriber(
         &self, subscriber_id: UpdateLocationsId, zones: &[LocationZoneCode],
     ) -> Result<(), UpdateLocationsError> {
-        let subscriber_id: ActorId = subscriber_id.id.into();
-        let publisher_ids: HashSet<_> = zones.iter().map(|z| ActorId::from(z.as_ref())).collect();
+        let subscriber_id: ActorId = subscriber_id.into_actor_id();
+        let publisher_ids: HashSet<_> =
+            zones.iter().cloned().map(crate::model::zone::actor_id_from_zone).collect();
 
         let channel_ref = self.subscription_ref().await?;
         channel_ref
-            .send(EventSubscriptionCommand::SubscribeToPublishers {
-                subscriber_id: subscriber_id.clone(),
-                publisher_ids,
-            })
+            .send(EventSubscriptionCommand::SubscribeToPublishers { subscriber_id, publisher_ids })
             .await?;
         Ok(())
     }
@@ -72,10 +70,10 @@ impl UpdateLocationServices {
     pub async fn remove_subscriber(
         &self, subscriber_id: UpdateLocationsId,
     ) -> Result<(), UpdateLocationsError> {
-        let subscriber_id: ActorId = subscriber_id.id.into();
+        let subscriber_id: ActorId = subscriber_id.into_actor_id();
         let channel_ref = self.subscription_ref().await?;
         channel_ref
-            .send(EventSubscriptionCommand::Unsubscribe { subscriber_id: subscriber_id.clone() })
+            .send(EventSubscriptionCommand::Unsubscribe { subscriber_id })
             .await?;
         Ok(())
     }

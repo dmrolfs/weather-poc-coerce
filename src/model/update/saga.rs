@@ -406,7 +406,7 @@ pub mod support {
         )
             .await
             .map_err(|err| ProjectionError::Storage {
-                cause: err.into(),
+                source: err.into(),
                 meta: maplit::hashmap! {
                     "projection".to_string() => name.to_string(),
                     "view_storage_table".to_string() => view_storage_table.map(|rep| rep.to_string()).unwrap_or_else(|| "<none>".to_string()),
