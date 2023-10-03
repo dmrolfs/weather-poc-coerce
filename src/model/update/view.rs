@@ -1,6 +1,6 @@
 use super::state::UpdateLocationsState;
 use crate::model::update::UpdateLocationsEvent;
-use coerce_cqrs::postgres::{PostgresStorageConfig, TableName};
+use coerce_cqrs::postgres::{BinaryProjection, PostgresStorageConfig, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::{PersistenceId, ProjectionError, ProjectionStorageRef};
 use coerce_cqrs::AggregateState;
@@ -20,6 +20,18 @@ pub type UpdateLocationsHistoryProjection =
 pub struct UpdateLocationsHistory {
     pub state: UpdateLocationsState,
     pub history: Vec<UpdateLocationsEvent>,
+}
+
+impl BinaryProjection for UpdateLocationsHistory {
+    type BinaryCodecError = bitcode::Error;
+
+    fn as_bytes(&self) -> Result<Vec<u8>, Self::BinaryCodecError> {
+        bitcode::serialize(self)
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::BinaryCodecError> {
+        bitcode::deserialize(bytes)
+    }
 }
 
 impl UpdateLocationsHistory {

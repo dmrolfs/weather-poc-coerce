@@ -1,6 +1,6 @@
 use crate::model::registrar::protocol::RegistrarEvent;
 use crate::model::LocationZoneCode;
-use coerce_cqrs::postgres::{PostgresProjectionStorage, TableName};
+use coerce_cqrs::postgres::{BinaryProjection, PostgresProjectionStorage, TableName};
 use coerce_cqrs::projection::processor::ProcessResult;
 use coerce_cqrs::projection::{PersistenceId, ProjectionError};
 use once_cell::sync::Lazy;
@@ -15,10 +15,32 @@ pub static REGISTRAR_OFFSET_TABLE: Lazy<TableName> =
 
 pub type MonitoredZonesProjection = Arc<PostgresProjectionStorage<MonitoredZonesView>>;
 
-#[derive(Debug, Default, Clone, PartialEq, ToSchema, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    ToSchema,
+    bitcode::Encode,
+    bitcode::Decode,
+    Serialize,
+    Deserialize,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoredZonesView {
     pub zones: HashSet<LocationZoneCode>,
+}
+
+impl BinaryProjection for MonitoredZonesView {
+    type BinaryCodecError = bitcode::Error;
+
+    fn as_bytes(&self) -> Result<Vec<u8>, Self::BinaryCodecError> {
+        bitcode::encode(self)
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::BinaryCodecError> {
+        bitcode::decode(bytes)
+    }
 }
 
 impl MonitoredZonesView {

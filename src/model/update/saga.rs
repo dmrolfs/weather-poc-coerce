@@ -216,15 +216,15 @@ pub mod support {
     use crate::{settings, Settings};
     use coerce::actor::system::ActorSystem;
     use coerce::actor::{ActorId, ActorRefErr};
-    use coerce_cqrs::postgres::{PostgresProjectionStorage, PostgresStorageConfig, TableName};
+    use coerce_cqrs::postgres::{
+        BinaryProjection, PostgresProjectionStorage, PostgresStorageConfig, TableName,
+    };
     use coerce_cqrs::projection::processor::{
         Processor, ProcessorEngine, ProcessorEngineRef, ProcessorSourceRef, Ready, RegularInterval,
     };
     use coerce_cqrs::projection::{
         PersistenceId, ProjectionApplicator, ProjectionError, ProjectionStorageRef,
     };
-    use serde::de::DeserializeOwned;
-    use serde::Serialize;
     use std::fmt::{self, Debug};
     use std::marker::PhantomData;
     use std::sync::Arc;
@@ -392,7 +392,7 @@ pub mod support {
         config: PostgresStorageConfig, system: &ActorSystem,
     ) -> Result<ProjectionStorageRef<PersistenceId, V>, ProjectionError>
     where
-        V: Debug + Default + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+        V: BinaryProjection + Debug + 'static,
     {
         let storage = PostgresProjectionStorage::<V>::new(
             name,

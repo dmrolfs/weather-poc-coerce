@@ -33,7 +33,19 @@ pub fn transpose_result<T, E>(
     Ok(acc)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, IntoParams, ToSchema, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    IntoParams,
+    ToSchema,
+    bitcode::Encode,
+    bitcode::Decode,
+    Serialize,
+    Deserialize,
+)]
 #[into_params(names("zones_code"))]
 #[repr(transparent)]
 #[serde(transparent)]
