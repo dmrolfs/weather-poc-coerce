@@ -3,14 +3,13 @@ extern crate tracing;
 
 use claim::*;
 use geojson::{FeatureCollection, GeoJson};
-use once_cell::sync::Lazy;
 use pretty_assertions::assert_eq;
 use std::collections::HashSet;
 use weather_coerce::model::WeatherAlert;
 
 #[test]
 fn test_active_alert_deser() -> anyhow::Result<()> {
-    Lazy::force(&coerce_cqrs_test::setup_tracing::TEST_TRACING);
+    once_cell::sync::Lazy::force(&coerce_cqrs_test::setup_tracing::TEST_TRACING);
     let main_span = tracing::info_span!("test_active_alert_deser");
     let _main_span_guard = main_span.enter();
 
