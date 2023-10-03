@@ -38,18 +38,18 @@ pub fn singleton_id() -> &'static RegistrarId {
     SINGLETON_ID.get_or_init(Registrar::next_id)
 }
 
-#[instrument(level = "debug", skip(system))]
+#[instrument(level = "trace", skip(system))]
 pub async fn registrar_actor(system: &ActorSystem) -> Result<RegistrarAggregate, RegistrarError> {
     use coerce::actor::{IntoActor, IntoActorId};
 
     let id = singleton_id().clone().into_actor_id();
     match system.get_tracked_actor(id.clone()).await {
         Some(actor_ref) => {
-            debug!("Found Registrar[{id}]: {actor_ref:?}");
+            trace!("Found Registrar[{id}]: {actor_ref:?}");
             Ok(actor_ref)
         },
         None => {
-            let create = debug_span!("Registrar Scheduling", %id);
+            let create = trace_span!("Registrar Scheduling", %id);
             let _create_guard = create.enter();
 
             let id = singleton_id().into_actor_id();
@@ -89,7 +89,7 @@ impl Registrar {
         let monitored_zones_processor = support::monitored_zones_processor(
             journal_storage,
             monitored_zones_projection.clone(),
-            Duration::from_secs(60),
+            Duration::from_secs(2),
             system,
         )?;
 

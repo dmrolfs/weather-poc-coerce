@@ -16,6 +16,12 @@ coerce = { version = "0.8.10", features = ["full",] }
 coerce-macros = "0.2.0"
 coerce-cqrs = { git = "https://github.com/dmrolfs/coerce-cqrs-rs" }
 
+bitcode = { version = "0.4.0", features = ["serde",] }
+pot = "3.0.0"
+#borsh = "0.10.3"
+#msgpacker = "0.4.3"
+#postcard = { version = "1.0.8", features = ["alloc"] }
+
 anyhow = { version = "1.0.75", default-features = true, features = ["backtrace"] }
 approx = "0.5.1"
 async-trait = "0.1.73"
@@ -37,8 +43,9 @@ itertools = "0.11.0"
 maplit = "1.0.2"
 multi_index_map = { version = "0.9.0", features = ["trivial_bounds"] }
 num_cpus = "1.16.0"
+nutype = { version = "0.3.1", features = ["serde", "regex"] }
 once_cell = "1.18.0"
-reqwest = { version = "0.11.20", features = ["json", "rustls-tls", ] }
+reqwest = { version = "0.11.22", features = ["json", "rustls-tls", ] }
 reqwest-middleware = "0.2.3"
 reqwest-retry = "0.3.0"
 secrecy = "0.8.0"
@@ -47,7 +54,7 @@ serde_json = "1.0.107"
 serde_yaml = "0.9.25"
 serde_with = { version = "3.3.0", features = ["chrono", "json", "macros", ] }
 smol_str = "0.2.0"
-sql_query_builder = "1.1.4"
+sql_query_builder = "2.0.0"
 strum = "0.25.0"
 strum_macros = "0.25.2"
 settings_loader = { git = "https://github.com/dmrolfs/settings-loader-rs", features = ["database", "http", ] }
@@ -64,6 +71,7 @@ tracing-futures = "0.2.5"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "json", ] }
 trim-margin = "0.1.0"
+tynm = "0.1.9"
 url = { version = "2.4.1", features = ["serde"] }
 utoipa = { version = "3.5.0", features = ["axum_extras", "chrono", "decimal", "debug"] }
 utoipa-swagger-ui = { version = "3.1.5", features = ["axum"] }
@@ -89,7 +97,7 @@ coerce-cqrs-test = { git = "https://github.com/dmrolfs/coerce-cqrs-rs" }
 claim = { git = "https://github.com/dmrolfs/rust-claim", branch = "bump-autocfg-version" }
 fake = { version = "2.8.0", features = ["chrono"] }
 pretty_assertions = "1.4.0"
-proptest = "1.2.0"
+proptest = "1.3.1"
 serde_test = "1.0.176"
 temp-env = "0.3.6"
 tokio-test = "0.4.3"

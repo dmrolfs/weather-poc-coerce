@@ -161,7 +161,10 @@ async fn do_update_zone_alerts(
     update_failures.extend(unaffected_failures);
 
     // -- note update failures
-    do_note_alert_update_failures(saga_id, update_failures, &system).await?;
+    do_note_alert_update_failures(saga_id.clone(), update_failures, &system).await?;
+
+    // -- note alerts updated as far as they will be - some zones may not emit delta events
+    update::note_alerts_updated(saga_id, &system).await?;
 
     Ok(())
 }

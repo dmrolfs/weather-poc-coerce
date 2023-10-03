@@ -51,6 +51,16 @@ async fn note_zone_update_failure(
     Ok(())
 }
 
+#[instrument(level = "trace", skip(system))]
+async fn note_alerts_updated(
+    saga_id: ActorId, system: &ActorSystem,
+) -> Result<(), UpdateLocationsError> {
+    if let Some(saga_ref) = system.get_tracked_actor::<UpdateLocations>(saga_id).await {
+        saga_ref.notify(UpdateLocationsCommand::NoteAlertsUpdated)?;
+    }
+    Ok(())
+}
+
 pub const UPDATE_LOCATION_ZONE_SUBSCRIPTION: &str = "update_location_zone_subscription";
 pub static UPDATE_LOCATION_ZONE_SUBSCRIPTION_OFFSET_TABLE: Lazy<TableName> =
     Lazy::new(PostgresStorageConfig::default_projection_offsets_table); //"projection_offset";
@@ -98,6 +108,7 @@ mod protocol {
         NoteLocationForecastUpdate(LocationZoneCode),
         NoteLocationAlertStatusUpdate(LocationZoneCode),
         NoteLocationsUpdateFailure(LocationZoneCode),
+        NoteAlertsUpdated,
     }
 
     #[derive(Debug, Display, Clone, PartialEq, JsonMessage, ToSchema, Serialize, Deserialize)]
@@ -106,6 +117,7 @@ mod protocol {
     pub enum UpdateLocationsEvent {
         Started(Vec<LocationZoneCode>),
         LocationUpdated(LocationZoneCode, LocationUpdateStatus),
+        AlertsUpdated,
         Completed,
         Failed,
     }
