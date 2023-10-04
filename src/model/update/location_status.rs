@@ -1,4 +1,4 @@
-use super::state::LocationUpdateStatus;
+use crate::model::update::status::LocationUpdateStatus;
 use crate::model::LocationZoneCode;
 use multi_index_map::MultiIndexMap;
 use serde::de::{MapAccess, Visitor};

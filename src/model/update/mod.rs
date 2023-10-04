@@ -3,6 +3,7 @@ mod location_status;
 mod saga;
 mod services;
 mod state;
+mod status;
 mod view;
 
 pub use errors::UpdateLocationsError;
@@ -95,7 +96,7 @@ impl EventCommandTopic for LocationZoneBroadcastTopic {
 
 mod protocol {
     use super::errors::UpdateLocationsFailure;
-    use crate::model::update::state::LocationUpdateStatus;
+    use crate::model::update::status::LocationUpdateStatus;
     use crate::model::LocationZoneCode;
     use coerce_cqrs::CommandResult;
     use strum_macros::Display;
