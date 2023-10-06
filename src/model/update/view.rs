@@ -23,14 +23,14 @@ pub struct UpdateLocationsHistory {
 }
 
 impl BinaryProjection for UpdateLocationsHistory {
-    type BinaryCodecError = bitcode::Error;
+    type BinaryCodecError = pot::Error;
 
     fn as_bytes(&self) -> Result<Vec<u8>, Self::BinaryCodecError> {
-        bitcode::serialize(self)
+        pot::to_vec(self)
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, Self::BinaryCodecError> {
-        bitcode::deserialize(bytes)
+        pot::from_slice(bytes)
     }
 }
 
