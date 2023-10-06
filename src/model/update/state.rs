@@ -265,7 +265,7 @@ impl ActiveLocationsUpdate {
             trace!(
                 location_status=%ls.status, %zone,
                 "DMR: is {location} active:{}; does {location} match {zone}:{}",
-                status.is_completed(), zone == &ls.zone, location=ls.zone,
+                ls.status.is_completed(), zone == &ls.zone, location=ls.zone,
             );
             ls.status.is_completed() || zone == &ls.zone
         })
