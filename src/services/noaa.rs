@@ -110,17 +110,20 @@ impl NoaaWeatherApi {
         let response = self.client.get(url.clone()).send().await?;
         log_response(label, &url, &response);
 
-        let status_code = response.status();
+        //todo: consider wrapping file output code into a project feature or config setting with
+        // output directory -- to log noaa api responses
+
+        // let status_code = response.status();
         let body = response.text().await?;
 
-        use std::io::Write;
-        let now = iso8601_timestamp::Timestamp::now_utc()
-            .duration_since(iso8601_timestamp::Timestamp::UNIX_EPOCH)
-            .whole_seconds();
-        let filename = format!("geojson-{label}-{}.json", now);
-        let mut output = std::fs::File::create(&filename).unwrap();
-        write!(output, "{}", body).unwrap();
-        warn!(?status_code, %url, "saved {label} geo response body to: {filename}");
+        // use std::io::Write;
+        // let now = iso8601_timestamp::Timestamp::now_utc()
+        //     .duration_since(iso8601_timestamp::Timestamp::UNIX_EPOCH)
+        //     .whole_seconds();
+        // let filename = format!("geojson-{label}-{}.json", now);
+        // let mut output = std::fs::File::create(&filename).unwrap();
+        // write!(output, "{}", body).unwrap();
+        // warn!(?status_code, %url, "saved {label} geo response body to: {filename}");
 
         let geojson = body.parse()?;
         Ok(geojson)
