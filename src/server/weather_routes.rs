@@ -117,16 +117,19 @@ impl AsRef<str> for UpdateProcessId {
     )
 )]
 #[axum::debug_handler]
+#[instrument(level = "debug", skip(view_repo))]
 async fn serve_update_status(
     Path(update_id_rep): Path<String>, State(view_repo): State<UpdateLocationsHistoryProjection>,
 ) -> impl IntoResponse {
     let update_id = UpdateLocationsId::for_labeled(update_id_rep);
     let view_id = update_id.into();
+
     view_repo
         .load_projection(&view_id)
         .await
         .map_err::<ApiError, _>(|error| error.into())
-        .map(|v| OptionalResult(v.map(Json)))
+        .map(|p| p.map(Json))
+        .map(OptionalResult)
 }
 
 #[utoipa::path(
