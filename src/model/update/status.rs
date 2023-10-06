@@ -1,6 +1,6 @@
 use enumflags2::{bitflags, BitFlags};
 use once_cell::sync::Lazy;
-use serde::de::{MapAccess, Visitor};
+use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use strum_macros::{Display, EnumString};
@@ -29,7 +29,6 @@ pub enum LocationUpdateStatus {
 
 impl Default for LocationUpdateStatus {
     fn default() -> Self {
-        // Self(Left(Default::default()))
         Self::InProgress(UpdateSteps::default())
     }
 }
@@ -78,7 +77,7 @@ impl LocationUpdateStatus {
             Self::Succeeded | Self::Failed => (),
             Self::InProgress(completed) => {
                 let new_completed = *completed | step;
-                *self = if new_completed.is_all() {
+                *self = if Self::sufficient_steps(new_completed) {
                     Self::succeeded()
                 } else {
                     Self::InProgress(new_completed)
@@ -94,12 +93,76 @@ impl LocationUpdateStatus {
 
     #[inline]
     pub fn is_completed(&self) -> bool {
-        match self {
-            Self::Succeeded | Self::Failed => true,
-            Self::InProgress(completed) => {
-                completed.intersects(UpdateStep::Observation | UpdateStep::Forecast)
+        if let Self::InProgress(completed) = self {
+            Self::sufficient_steps(*completed)
+        } else {
+            true
+        }
+    }
+
+    #[inline]
+    fn sufficient_steps(completed: UpdateSteps) -> bool {
+        let sufficient: UpdateSteps = UpdateStep::Observation | UpdateStep::Forecast;
+        completed.contains(sufficient)
+    }
+}
+
+impl core::ops::Add for LocationUpdateStatus {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Self::Failed, _) => Self::failed(),
+            (_, Self::Failed) => Self::failed(),
+
+            (Self::Succeeded, Self::Succeeded) => Self::succeeded(),
+            (Self::Succeeded, Self::InProgress(_)) => Self::succeeded(),
+            (Self::InProgress(_), Self::Succeeded) => Self::succeeded(),
+
+            (Self::InProgress(lhs_steps), Self::InProgress(rhs_steps)) => {
+                #[allow(clippy::suspicious)]
+                let combined = lhs_steps | rhs_steps;
+                let mut result = LocationUpdateStatus::default();
+                combined.iter().for_each(|s| result.advance(s));
+                result
             },
         }
+    }
+}
+
+impl core::ops::Add<UpdateStep> for LocationUpdateStatus {
+    type Output = Self;
+
+    fn add(mut self, rhs: UpdateStep) -> Self::Output {
+        self.advance(rhs);
+        self
+    }
+}
+
+impl core::ops::Add<UpdateSteps> for LocationUpdateStatus {
+    type Output = Self;
+
+    fn add(mut self, rhs: UpdateSteps) -> Self::Output {
+        rhs.iter().for_each(|s| self.advance(s));
+        self
+    }
+}
+
+impl core::ops::AddAssign for LocationUpdateStatus {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl core::ops::AddAssign<UpdateStep> for LocationUpdateStatus {
+    fn add_assign(&mut self, rhs: UpdateStep) {
+        *self = *self + rhs;
+    }
+}
+
+impl core::ops::AddAssign<UpdateSteps> for LocationUpdateStatus {
+    fn add_assign(&mut self, rhs: UpdateSteps) {
+        *self = *self + rhs;
     }
 }
 
@@ -122,25 +185,25 @@ impl Serialize for LocationUpdateStatus {
     where
         S: Serializer,
     {
-        let mut map = serializer.serialize_map(None)?;
+        let size = if self.is_completed() { 1 } else { 2 };
+        let mut map = serializer.serialize_map(Some(size))?;
         match self {
             Self::Succeeded => {
                 map.serialize_entry(STATUS_FIELD, SUCCEEDED)?;
-                map.end()
             },
 
             Self::Failed => {
                 map.serialize_entry(STATUS_FIELD, FAILED)?;
-                map.end()
             },
 
             Self::InProgress(completed) => {
                 map.serialize_entry(STATUS_FIELD, IN_PROGRESS)?;
                 let steps_rep: Vec<_> = completed.iter().collect();
                 map.serialize_entry(COMPLETED_FIELD, &steps_rep)?;
-                map.end()
             },
         }
+
+        map.end()
     }
 }
 
@@ -149,6 +212,7 @@ impl<'de> Deserialize<'de> for LocationUpdateStatus {
     where
         D: Deserializer<'de>,
     {
+        #[derive(Debug)]
         enum Field {
             Status,
             Completed,
@@ -191,6 +255,35 @@ impl<'de> Deserialize<'de> for LocationUpdateStatus {
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("LocationUpdateStatus")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let status: String =
+                    seq.next_element()?.ok_or_else(|| de::Error::invalid_length(0, &self))?;
+
+                match status.as_str() {
+                    SUCCEEDED => Ok(LocationUpdateStatus::succeeded()),
+
+                    FAILED => Ok(LocationUpdateStatus::failed()),
+
+                    IN_PROGRESS => {
+                        let steps: Vec<UpdateStep> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+
+                        let mut wip = LocationUpdateStatus::default();
+                        steps.into_iter().for_each(|s| wip.advance(s));
+                        Ok(wip)
+                    },
+
+                    rep => Err(de::Error::custom(format!(
+                        r##"invalid {STATUS_FIELD} value: string "{rep}", expected one of [{expected}]"##,
+                        expected = EXPECTED_STATUS_REP.as_str(),
+                    ))),
+                }
             }
 
             fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -254,6 +347,110 @@ mod tests {
     use serde_test::{assert_tokens, Token};
 
     #[test]
+    fn test_advance_and_completed() {
+        // --
+        let mut status = LocationUpdateStatus::succeeded();
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(status.is_completed(), "succeeded is complete");
+        assert!(!status.is_active(), "succeeded is not active");
+
+        // --
+        status = LocationUpdateStatus::failed();
+        assert_matches!(status, LocationUpdateStatus::Failed);
+        assert!(status.is_completed(), "failed is complete");
+        assert!(!status.is_active(), "failed is not active");
+
+        // --
+        status = LocationUpdateStatus::default();
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "default is not complete");
+        assert!(status.is_active(), "default is active");
+
+        // --
+        status.advance(UpdateStep::Forecast);
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "forecast is not complete");
+        assert!(status.is_active(), "forecast is active");
+
+        status.advance(UpdateStep::Observation);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(status.is_completed(), "forecast+observation is complete");
+        assert!(!status.is_active(), "forecast+observation is not active");
+
+        status.advance(UpdateStep::Alert);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(
+            status.is_completed(),
+            "forecast+observation+alert is complete"
+        );
+        assert!(
+            !status.is_active(),
+            "forecast+observation+alert is not active"
+        );
+
+        // --
+        status = LocationUpdateStatus::default();
+        status.advance(UpdateStep::Observation);
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "observation is not complete");
+        assert!(status.is_active(), "observation is active");
+        status.advance(UpdateStep::Forecast);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(status.is_completed(), "observation+forecast is complete");
+        assert!(!status.is_active(), "observation+forecast is not active");
+
+        status.advance(UpdateStep::Alert);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(
+            status.is_completed(),
+            "observation+forecast+alert is complete"
+        );
+        assert!(
+            !status.is_active(),
+            "observation+forecast+alert is not active"
+        );
+
+        // --
+        status = LocationUpdateStatus::default();
+        status.advance(UpdateStep::Alert);
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "alert is not complete");
+        assert!(status.is_active(), "alert is active");
+
+        status.advance(UpdateStep::Forecast);
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "alert+forecast is not complete");
+        assert!(status.is_active(), "alert+forecast is active");
+
+        status.advance(UpdateStep::Observation);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(
+            status.is_completed(),
+            "alert+forecast+observation is complete"
+        );
+        assert!(
+            !status.is_active(),
+            "alert+forecast+observation is not active"
+        );
+
+        // --
+        status = LocationUpdateStatus::default();
+        status.advance(UpdateStep::Alert);
+        status.advance(UpdateStep::Observation);
+        assert_matches!(status, LocationUpdateStatus::InProgress(_));
+        assert!(!status.is_completed(), "alert+observation is not complete");
+        assert!(status.is_active(), "alert+observation is active");
+
+        status.advance(UpdateStep::Forecast);
+        assert_matches!(status, LocationUpdateStatus::Succeeded);
+        assert!(
+            status.is_completed(),
+            "alert+observation+forecast is complete"
+        );
+        assert!(!status.is_active(), "alert+observation+forecast is active");
+    }
+
+    #[test]
     fn test_location_update_status_serde_tokens() {
         once_cell::sync::Lazy::force(&crate::setup_tracing::TEST_TRACING);
         let main_span = info_span!("test_location_update_status_serde_tokens");
@@ -262,7 +459,7 @@ mod tests {
         assert_tokens(
             &LocationUpdateStatus::succeeded(),
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(1) },
                 Token::Str(STATUS_FIELD),
                 Token::Str(SUCCEEDED),
                 Token::MapEnd,
@@ -272,7 +469,7 @@ mod tests {
         assert_tokens(
             &LocationUpdateStatus::failed(),
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(1) },
                 Token::Str(STATUS_FIELD),
                 Token::Str(FAILED),
                 Token::MapEnd,
@@ -283,7 +480,7 @@ mod tests {
         assert_tokens(
             &wip,
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(2) },
                 Token::Str(STATUS_FIELD),
                 Token::Str(IN_PROGRESS),
                 Token::Str(COMPLETED_FIELD),
@@ -297,7 +494,7 @@ mod tests {
         assert_tokens(
             &wip,
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(2) },
                 Token::Str(STATUS_FIELD),
                 Token::Str(IN_PROGRESS),
                 Token::Str(COMPLETED_FIELD),
@@ -312,14 +509,9 @@ mod tests {
         assert_tokens(
             &wip,
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(1) },
                 Token::Str(STATUS_FIELD),
-                Token::Str(IN_PROGRESS),
-                Token::Str(COMPLETED_FIELD),
-                Token::Seq { len: Some(2) },
-                Token::UnitVariant { name: "UpdateStep", variant: "observation" },
-                Token::UnitVariant { name: "UpdateStep", variant: "forecast" },
-                Token::SeqEnd,
+                Token::Str(SUCCEEDED),
                 Token::MapEnd,
             ],
         );
@@ -328,9 +520,27 @@ mod tests {
         assert_tokens(
             &wip,
             &[
-                Token::Map { len: None },
+                Token::Map { len: Some(1) },
                 Token::Str(STATUS_FIELD),
                 Token::Str(SUCCEEDED),
+                Token::MapEnd,
+            ],
+        );
+
+        wip = LocationUpdateStatus::default();
+        wip.advance(UpdateStep::Alert);
+        wip.advance(UpdateStep::Observation);
+        assert_tokens(
+            &wip,
+            &[
+                Token::Map { len: Some(2) },
+                Token::Str(STATUS_FIELD),
+                Token::Str(IN_PROGRESS),
+                Token::Str(COMPLETED_FIELD),
+                Token::Seq { len: Some(2) },
+                Token::UnitVariant { name: "UpdateStep", variant: "observation" },
+                Token::UnitVariant { name: "UpdateStep", variant: "alert" },
+                Token::SeqEnd,
                 Token::MapEnd,
             ],
         );
@@ -356,7 +566,7 @@ mod tests {
 
         wip.advance(UpdateStep::Observation);
         let actual = assert_ok!(serde_json::to_string(&wip));
-        let expected = r##"{"status":"in_progress","completed":["observation","forecast"]}"##;
+        let expected = r##"{"status":"succeeded"}"##;
         assert_eq!(&actual, expected);
         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
 
@@ -366,8 +576,90 @@ mod tests {
         assert_eq!(&actual, expected);
         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
 
+        wip = LocationUpdateStatus::default();
+        wip.advance(UpdateStep::Alert);
+        wip.advance(UpdateStep::Observation);
+        let actual = assert_ok!(serde_json::to_string(&wip));
+        let expected = r##"{"status":"in_progress","completed":["observation","alert"]}"##;
+        assert_eq!(&actual, expected);
+        assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
+
+        let actual = assert_ok!(serde_json::to_string(&LocationUpdateStatus::failed()));
+        let expected = r##"{"status":"failed"}"##;
+        assert_eq!(&actual, expected);
+        assert_eq!(
+            LocationUpdateStatus::failed(),
+            assert_ok!(serde_json::from_str(expected))
+        );
+
         assert_err!(serde_json::from_str::<LocationUpdateStatus>(
             r##"{"status":"foobar"}"##
         ));
     }
+
+    #[test]
+    fn test_location_update_status_serde_pot_bytes() {
+        once_cell::sync::Lazy::force(&crate::setup_tracing::TEST_TRACING);
+        let main_span = info_span!("test_location_update_status_serde_pot_bytes");
+        let _ = main_span.enter();
+
+        let mut wip = LocationUpdateStatus::default();
+        debug!(?wip, "test serde at default");
+        let bytes = assert_ok!(pot::to_vec(&wip));
+        let actual = assert_ok!(pot::from_slice(&bytes));
+        assert_eq!(wip, actual);
+
+        wip.advance(UpdateStep::Forecast);
+        debug!(?wip, "test serde after forecast advance");
+        let bytes = assert_ok!(pot::to_vec(&wip));
+        let actual = assert_ok!(pot::from_slice(&bytes));
+        assert_eq!(wip, actual);
+
+        wip.advance(UpdateStep::Observation);
+        debug!(?wip, "test serde after forecast+observation advance");
+        let bytes = assert_ok!(pot::to_vec(&wip));
+        let actual = assert_ok!(pot::from_slice(&bytes));
+        assert_eq!(wip, actual);
+
+        wip.advance(UpdateStep::Alert);
+        debug!(?wip, "test serde after forecast+observation+alert advance");
+        let bytes = assert_ok!(pot::to_vec(&wip));
+        let actual = assert_ok!(pot::from_slice(&bytes));
+        assert_eq!(LocationUpdateStatus::succeeded(), actual);
+    }
+
+    //     #[test]
+    //     fn test_location_update_status_serde_bytes() {
+    //         once_cell::sync::Lazy::force(&crate::setup_tracing::TEST_TRACING);
+    //         let main_span = info_span!("test_location_update_status_serde_json");
+    //         let _ = main_span.enter();
+    //
+    //         let mut wip = LocationUpdateStatus::default();
+    //         let actual = assert_ok!(bitcode::
+    //         let expected = r##"{"status":"in_progress","completed":[]}"##;
+    //         assert_eq!(&actual, expected);
+    //         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
+    //
+    //         wip.advance(UpdateStep::Forecast);
+    //         let actual = assert_ok!(serde_json::to_string(&wip));
+    //         let expected = r##"{"status":"in_progress","completed":["forecast"]}"##;
+    //         assert_eq!(&actual, expected);
+    //         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
+    //
+    //         wip.advance(UpdateStep::Observation);
+    //         let actual = assert_ok!(serde_json::to_string(&wip));
+    //         let expected = r##"{"status":"in_progress","completed":["observation","forecast"]}"##;
+    //         assert_eq!(&actual, expected);
+    //         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
+    //
+    //         wip.advance(UpdateStep::Alert);
+    //         let actual = assert_ok!(serde_json::to_string(&wip));
+    //         let expected = r##"{"status":"succeeded"}"##;
+    //         assert_eq!(&actual, expected);
+    //         assert_eq!(wip, assert_ok!(serde_json::from_str(expected)));
+    //
+    //         assert_err!(serde_json::from_str::<LocationUpdateStatus>(
+    //             r##"{"status":"foobar"}"##
+    //         ));
+    //     }
 }

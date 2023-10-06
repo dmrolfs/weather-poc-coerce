@@ -74,18 +74,9 @@ impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for QuiescentL
         use UpdateLocationsEvent as E;
 
         match event {
-            E::Started(zones) => {
-                let mut location_statuses = MultiIndexLocationStatusMap::with_capacity(zones.len());
-                for zone in zones {
-                    let ls = LocationStatus { zone, status: LocationUpdateStatus::default() };
-                    location_statuses.insert(ls);
-                }
-
-                Some(UpdateLocationsState::Active(ActiveLocationsUpdate {
-                    location_statuses,
-                    alerts_reviewed: false,
-                }))
-            },
+            E::Started(zones) => Some(UpdateLocationsState::Active(ActiveLocationsUpdate::new(
+                zones,
+            ))),
 
             event => {
                 warn!(
@@ -102,6 +93,18 @@ impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for QuiescentL
 pub struct ActiveLocationsUpdate {
     pub location_statuses: MultiIndexLocationStatusMap,
     pub alerts_reviewed: bool,
+}
+
+impl ActiveLocationsUpdate {
+    fn new(zones: Vec<LocationZoneCode>) -> Self {
+        let mut location_statuses = MultiIndexLocationStatusMap::with_capacity(zones.len());
+        for zone in zones {
+            let ls = LocationStatus { zone, status: LocationUpdateStatus::default() };
+            location_statuses.insert(ls);
+        }
+
+        Self { location_statuses, alerts_reviewed: false }
+    }
 }
 
 #[async_trait]
@@ -148,16 +151,19 @@ impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for ActiveLoca
                 let mut new_state = self.clone();
 
                 if let Some(previous) = self.location_statuses.get_by_zone(&zone) {
-                    info!(
+                    debug!(
                         "updated location zone {zone} status: {} => {status}",
                         previous.status
                     );
                 }
 
                 new_state.location_statuses.modify_by_zone(&zone, |ls| {
-                    ls.status = status;
+                    let old_status = ls.status;
+                    debug!("changing {zone} update status: {old_status} => {status}");
+                    ls.status += status;
                 });
 
+                debug!(?new_state, "DMR: Updating new {zone} ACTIVE state.");
                 Some(Self::State::Active(new_state))
             },
 
@@ -195,13 +201,19 @@ impl ActiveLocationsUpdate {
         debug!(status=?self.location_statuses, "is {zone} only active: {}", self.is_only_active_zone(&zone));
 
         let mut status = self.status_for(&zone);
-        if status.is_completed() || status.contains(step) {
+        if status.contains(step) {
             return CommandResult::Ok(vec![]);
         }
 
         status.advance(step);
-        let is_completed =
-            self.alerts_reviewed && status.is_completed() && self.is_only_active_zone(&zone);
+        let is_only_active_zone = self.is_only_active_zone(&zone);
+        let is_completed = self.alerts_reviewed && status.is_completed() && is_only_active_zone;
+
+        debug!(
+            advanced_status=%status,
+            alerts_reviewed=%self.alerts_reviewed, is_status_completed=%status.is_completed(), %is_only_active_zone,
+            "location {zone} update {} saga", if is_completed { "completes" } else { "does not complete" }
+        );
 
         let mut events = vec![E::LocationUpdated(zone.clone(), status)];
         if is_completed {
@@ -247,10 +259,16 @@ impl ActiveLocationsUpdate {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip())]
     fn is_only_active_zone(&self, zone: &LocationZoneCode) -> bool {
-        self.location_statuses
-            .iter_by_status()
-            .any(|ls| ls.status.is_active() && zone != &ls.zone)
+        self.location_statuses.iter_by_status().all(|ls| {
+            trace!(
+                location_status=%ls.status, %zone,
+                "DMR: is {location} active:{}; does {location} match {zone}:{}",
+                status.is_completed(), zone == &ls.zone, location=ls.zone,
+            );
+            ls.status.is_completed() || zone == &ls.zone
+        })
     }
 }
 
@@ -285,6 +303,7 @@ impl AggregateState<UpdateLocationsCommand, UpdateLocationsEvent> for FinishedLo
 mod tests {
     use super::*;
     use crate::model::update::status::UpdateSteps;
+    use claim::assert_some;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -351,5 +370,32 @@ mod tests {
         assert_eq!(actual_zones_3, vec!["WAZ558".into()]);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_active_update_location_state() {
+        let zone = LocationZoneCode::new("WAZ558");
+        let mut status = LocationUpdateStatus::default();
+        status.advance(UpdateStep::Observation);
+        let event = UpdateLocationsEvent::LocationUpdated(zone.clone(), status);
+
+        let mut location_statuses = MultiIndexLocationStatusMap::with_capacity(1);
+        location_statuses.insert(LocationStatus {
+            zone: zone.clone(),
+            status: LocationUpdateStatus::default(),
+        });
+        let mut state = ActiveLocationsUpdate { location_statuses, alerts_reviewed: false };
+
+        let new_state = assert_some!(state.apply_event(event));
+
+        let mut expected_status = MultiIndexLocationStatusMap::with_capacity(1);
+        let mut expected_s = LocationUpdateStatus::default();
+        expected_s += UpdateStep::Observation;
+        expected_status.insert(LocationStatus { zone: zone.clone(), status: expected_s });
+        let expected_state = UpdateLocationsState::Active(ActiveLocationsUpdate {
+            location_statuses: expected_status,
+            alerts_reviewed: false,
+        });
+        assert_eq!(new_state, expected_state);
     }
 }
