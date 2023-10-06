@@ -27,6 +27,7 @@ impl<T: IntoResponse> From<Option<T>> for OptionalResult<T> {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        error!(error=?self, "DMR: responding with ERROR!!");
         let error: anyhow::Error = self.into();
         HttpError::from(error).into_response()
     }

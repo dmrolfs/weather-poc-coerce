@@ -19,7 +19,7 @@ pub use state::{
 pub use view::{UpdateLocationsHistory, UpdateLocationsHistoryProjection};
 
 use crate::connect::{EventCommandTopic, EventEnvelope};
-use crate::model::zone::{LocationZoneError, LocationZoneEvent};
+use crate::model::zone::{self, LocationZoneError, LocationZoneEvent};
 use crate::model::{LocationZone, LocationZoneCode};
 use coerce::actor::system::ActorSystem;
 use coerce::actor::ActorId;
@@ -78,7 +78,20 @@ impl EventCommandTopic for LocationZoneBroadcastTopic {
     fn commands_from_event(
         &self, event_envelope: &EventEnvelope<Self::Event>,
     ) -> Vec<Self::Command> {
-        let zone = LocationZoneCode::new(event_envelope.source_id().as_ref());
+        let zone_id = match zone::zone_id_from_actor_id(event_envelope.source_id().clone()) {
+            Ok(id) => id,
+            Err(error) => {
+                error!(
+                    ?error,
+                    ?event_envelope,
+                    "failed to convert source_id:[{}] in LocationZoneId - skipping",
+                    event_envelope.source_id()
+                );
+                return vec![];
+            },
+        };
+        let zone = zone_id.into();
+
         match event_envelope.event() {
             Self::Event::ObservationAdded(_) => {
                 vec![Self::Command::NoteLocationObservationUpdate(zone)]
@@ -125,6 +138,7 @@ mod protocol {
 }
 
 mod errors {
+    use coerce::actor::ActorId;
     use strum_macros::{Display, EnumDiscriminants};
     use thiserror::Error;
 
@@ -146,6 +160,9 @@ mod errors {
 
         #[error("failed to notify actor: {0}")]
         ActorRef(#[from] coerce::actor::ActorRefErr),
+
+        #[error("ActorId cannot be used as UpdateLocationsId: {0}")]
+        BadActorId(ActorId),
 
         #[error("{0}")]
         ParseUrl(#[from] url::ParseError),

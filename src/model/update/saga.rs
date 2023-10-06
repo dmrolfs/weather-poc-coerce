@@ -10,14 +10,14 @@ use crate::Settings;
 use coerce::actor::context::ActorContext;
 use coerce::actor::message::{Handler, Message};
 use coerce::actor::system::ActorSystem;
-use coerce::actor::{IntoActor, LocalActorRef};
+use coerce::actor::{ActorId, IntoActor, LocalActorRef};
 use coerce::persistent::types::JournalTypes;
 use coerce::persistent::{PersistentActor, Recover};
 use coerce_cqrs::projection::processor::ProcessorSourceRef;
 use coerce_cqrs::{Aggregate, AggregateState, CommandResult};
 use std::str::FromStr;
 use std::sync::Arc;
-use tagid::{CuidId, Entity, Id, Label};
+use tagid::{CuidId, Entity, Label, Labeling};
 use tracing::Instrument;
 use url::Url;
 
@@ -134,14 +134,38 @@ impl UpdateLocations {
         tokio::spawn(
             async move {
                 debug!("DMR: Saga[{id}] subscribing update process to zones events: {zones:?}");
-                let saga_id: UpdateLocationsId = Id::for_labeled(id.to_string());
-                if let Err(error) = services.add_subscriber(saga_id, &zones).await {
+
+                let subscriber_id = match saga_id_from_actor_id(id.clone()) {
+                    Ok(update_locations_id) => update_locations_id,
+                    Err(error) => {
+                        error!("could not use {id}: {error}");
+                        return;
+                    },
+                };
+
+                if let Err(error) = services.add_subscriber(subscriber_id, &zones).await {
                     error!(?error, "failed to register update locations saga, {id}, for location event broadcasts.");
                 }
             }
             .instrument(debug_span!("subscribe update saga to zone(s) events", %saga_id, zones=?zones_0)),
         );
     }
+}
+
+fn saga_id_from_actor_id(actor_id: ActorId) -> Result<UpdateLocationsId, UpdateLocationsError> {
+    let parts: Vec<_> = actor_id.split(tagid::DELIMITER).collect();
+    if parts.len() != 2 {
+        return Err(UpdateLocationsError::BadActorId(actor_id));
+    }
+
+    let aggregate_name = parts[0];
+    let aggregate_id = parts[1];
+
+    if aggregate_name != UpdateLocations::labeler().label() {
+        return Err(UpdateLocationsError::BadActorId(actor_id));
+    }
+
+    Ok(UpdateLocationsId::for_labeled(aggregate_id.to_string()))
 }
 
 impl Aggregate for UpdateLocations {}
