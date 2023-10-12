@@ -118,7 +118,7 @@ async fn serve_deep_health(State(app): State<AppState>) -> impl IntoResponse {
 async fn check_health(state: AppState) -> (HealthStatus, HashMap<HealthStatus, Vec<&'static str>>) {
     static ZONE_WEATHER_SQL: OnceCell<String> = OnceCell::new();
     let zone_weather_sql = ZONE_WEATHER_SQL
-        .get_or_init(|| sql::Select::new().select("version").from(ZONE_WEATHER_VIEW).to_string());
+        .get_or_init(|| sql::Select::new().select("last_updated_at").from(ZONE_WEATHER_VIEW).to_string());
 
     let weather_view_status: Result<(), anyhow::Error> = sqlx::query(zone_weather_sql)
         .fetch_optional(&state.db_pool)
@@ -128,7 +128,7 @@ async fn check_health(state: AppState) -> (HealthStatus, HashMap<HealthStatus, V
 
     static MONITORED_ZONES_SQL: OnceCell<String> = OnceCell::new();
     let monitored_zones_view_select_sql = MONITORED_ZONES_SQL.get_or_init(|| {
-        sql::Select::new().select("version").from(MONITORED_ZONES_VIEW).to_string()
+        sql::Select::new().select("last_updated_at").from(MONITORED_ZONES_VIEW).to_string()
     });
     let monitored_zones_view_status: Result<(), anyhow::Error> =
         sqlx::query(monitored_zones_view_select_sql)
@@ -139,7 +139,7 @@ async fn check_health(state: AppState) -> (HealthStatus, HashMap<HealthStatus, V
 
     static EVENTS_SQL: OnceCell<String> = OnceCell::new();
     let model_select_sql = EVENTS_SQL
-        .get_or_init(|| sql::Select::new().select("event_version").from("events").to_string());
+        .get_or_init(|| sql::Select::new().select("created_at").from("event_journal").to_string());
     let model_status: Result<(), anyhow::Error> = sqlx::query(model_select_sql)
         .fetch_optional(&state.db_pool)
         .await
